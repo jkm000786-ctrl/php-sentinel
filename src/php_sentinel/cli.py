@@ -13,7 +13,7 @@ from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.activation import (
     IntelligenceActivationError,
-    activate_intelligence_with_lifecycle,
+    activate_verified_intelligence,
 )
 from php_sentinel.intelligence.lifecycle import (
     DEFAULT_LIFECYCLE_STATE_PATH,
@@ -364,11 +364,7 @@ def scan(
     ] = DEFAULT_LIFECYCLE_STATE_PATH,
 ) -> None:
     try:
-        (
-            selected_policy,
-            intelligence_trust,
-            intelligence_lifecycle,
-        ) = activate_intelligence_with_lifecycle(
+        intelligence_selection = activate_verified_intelligence(
             policy_path=policy_path,
             manifest_path=manifest_path,
             trust_store_path=trust_store_path,
@@ -417,9 +413,7 @@ def scan(
             backport_status=backport_status,
             advisory_reference=advisory_reference,
             lab_validation=validation,
-            intelligence_policy=selected_policy,
-            intelligence_trust=intelligence_trust,
-            intelligence_lifecycle=(intelligence_lifecycle),
+            intelligence_selection=(intelligence_selection),
         )
     except httpx.HTTPError as exc:
         console.print(f"[red]HTTP error:[/red] {exc}")

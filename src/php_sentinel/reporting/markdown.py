@@ -32,8 +32,29 @@ def render_markdown_report(
         (f"- **Report ID:** `{report.provenance.report_id}`"),
         (f"- **Tool:** {report.provenance.tool_name} {report.provenance.tool_version}"),
         (f"- **Policy version:** `{report.provenance.policy_version}`"),
+        (f"- **Intelligence policy:** `{report.provenance.intelligence_policy_id or 'unknown'}`"),
+        (f"- **Intelligence SHA-256:** `{report.provenance.intelligence_sha256 or 'unknown'}`"),
+        (f"- **Intelligence trust:** `{report.provenance.intelligence_trust_state or 'unknown'}`"),
+        (f"- **Intelligence signer:** `{report.provenance.intelligence_signer_id or 'none'}`"),
+        (
+            "- **Signature algorithm:** "
+            f"`{report.provenance.intelligence_signature_algorithm or 'none'}`"
+        ),
+        (f"- **Lifecycle state:** `{report.provenance.intelligence_lifecycle_state or 'unknown'}`"),
+        (
+            "- **Policy generation:** "
+            f"`{report.provenance.intelligence_generation if report.provenance.intelligence_generation is not None else 'n/a'}`"
+        ),
+        (f"- **Manifest issued at:** `{report.provenance.intelligence_issued_at or 'n/a'}`"),
+        (f"- **Manifest expires at:** `{report.provenance.intelligence_expires_at or 'n/a'}`"),
         (f"- **Canonical evidence SHA-256:** `{report.provenance.canonical_sha256}`"),
         (f"- **Target identity SHA-256:** `{report.provenance.target_identity_sha256}`"),
+        "",
+        (
+            "> `bundled_trusted` means package-local PHP Sentinel trust; "
+            "it does not mean the intelligence was independently signed "
+            "by the PHP upstream project."
+        ),
         "",
         "## Evidence Integrity",
         "",

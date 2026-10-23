@@ -190,18 +190,26 @@ def evaluate_lifecycle(
 
     if record is not None:
         if trust.signer_id != record.signer_id:
-            return IntelligenceLifecycleDecision(
-                state=(IntelligenceLifecycleState.SIGNER_CHANGED),
-                activatable=False,
-                **base,
-                rationale=[
-                    (
-                        "Signer differs from the signer "
-                        "pinned by the previously accepted "
-                        "policy generation."
-                    )
-                ],
+            rotation_authorized = (
+                record.signer_id in (trust.authorized_predecessor_signer_ids)
+                and manifest.generation > record.generation
             )
+
+            if not rotation_authorized:
+                return IntelligenceLifecycleDecision(
+                    state=(IntelligenceLifecycleState.SIGNER_CHANGED),
+                    activatable=False,
+                    **base,
+                    rationale=[
+                        (
+                            "Signer differs from the signer "
+                            "pinned by the previously accepted "
+                            "policy generation, and no valid "
+                            "successor authorization was "
+                            "established."
+                        )
+                    ],
+                )
 
         if manifest.generation < record.generation:
             return IntelligenceLifecycleDecision(

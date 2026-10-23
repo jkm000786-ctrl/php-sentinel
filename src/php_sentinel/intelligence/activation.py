@@ -32,6 +32,54 @@ class IntelligenceActivationError(ValueError):
     """Raised when intelligence cannot be safely activated."""
 
 
+_ACTIVATION_CAPABILITY = object()
+
+
+class VerifiedIntelligenceSelection:
+    """Verified policy/trust/lifecycle capability."""
+
+    __slots__ = (
+        "lifecycle",
+        "policy",
+        "trust",
+    )
+
+    def __init__(
+        self,
+        *,
+        policy: IntelligencePolicy,
+        trust: IntelligenceTrustDecision,
+        lifecycle: IntelligenceLifecycleDecision,
+        _capability: object | None = None,
+    ) -> None:
+        if _capability is not _ACTIVATION_CAPABILITY:
+            raise TypeError("VerifiedIntelligenceSelection cannot be constructed directly.")
+
+        if not trust.trusted:
+            raise ValueError("Verified selection requires trusted intelligence.")
+
+        if not lifecycle.activatable:
+            raise ValueError("Verified selection requires activatable lifecycle.")
+
+        self.policy = policy
+        self.trust = trust
+        self.lifecycle = lifecycle
+
+
+def _verified_selection(
+    *,
+    policy: IntelligencePolicy,
+    trust: IntelligenceTrustDecision,
+    lifecycle: IntelligenceLifecycleDecision,
+) -> VerifiedIntelligenceSelection:
+    return VerifiedIntelligenceSelection(
+        policy=policy,
+        trust=trust,
+        lifecycle=lifecycle,
+        _capability=(_ACTIVATION_CAPABILITY),
+    )
+
+
 def activate_intelligence_with_lifecycle(
     *,
     policy_path: Path | str | None = None,
@@ -164,3 +212,40 @@ def activate_intelligence(
     )
 
     return policy, trust
+
+
+def activate_verified_intelligence(
+    *,
+    policy_path: Path | str | None = None,
+    manifest_path: Path | str | None = None,
+    trust_store_path: Path | str | None = None,
+    lifecycle_state_path: Path | str | None = None,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> VerifiedIntelligenceSelection:
+    (
+        policy,
+        trust,
+        lifecycle,
+    ) = activate_intelligence_with_lifecycle(
+        policy_path=policy_path,
+        manifest_path=manifest_path,
+        trust_store_path=trust_store_path,
+        lifecycle_state_path=(lifecycle_state_path),
+        minimum_generation=(minimum_generation),
+        maximum_age_days=(maximum_age_days),
+        maximum_future_skew_seconds=(maximum_future_skew_seconds),
+        now=now,
+    )
+
+    return _verified_selection(
+        policy=policy,
+        trust=trust,
+        lifecycle=lifecycle,
+    )
+
+
+def bundled_verified_intelligence() -> VerifiedIntelligenceSelection:
+    return activate_verified_intelligence()

@@ -37,3 +37,8 @@ def test_markdown_contains_findings_and_boundary(mock_fetch):
     assert "does **not** mean" in markdown
     assert "Evidence Provenance" in markdown
     assert "Canonical evidence SHA-256" in markdown
+    assert "Intelligence policy" in markdown
+    assert "Intelligence SHA-256" in markdown
+    assert "Intelligence trust" in markdown
+    assert "Intelligence signer" in markdown
+    assert "Lifecycle state" in markdown

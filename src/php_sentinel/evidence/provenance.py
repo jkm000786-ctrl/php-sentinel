@@ -8,6 +8,9 @@ from importlib.metadata import (
 )
 from uuid import uuid4
 
+from php_sentinel.intelligence.activation import (
+    VerifiedIntelligenceSelection,
+)
 from php_sentinel.intelligence.lifecycle import (
     resolve_lifecycle,
 )
@@ -89,24 +92,45 @@ def build_provenance(
     *,
     canonical_payload: dict,
     target_identity_payload: dict,
+    intelligence_selection: VerifiedIntelligenceSelection | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
     intelligence_trust: IntelligenceTrustDecision | None = None,
     intelligence_lifecycle: IntelligenceLifecycleDecision | None = None,
 ) -> EvidenceProvenance:
-    selected_policy = intelligence_policy or default_policy()
+    if intelligence_selection is not None:
+        if any(
+            item is not None
+            for item in (
+                intelligence_policy,
+                intelligence_trust,
+                intelligence_lifecycle,
+            )
+        ):
+            raise ValueError(
+                "Verified intelligence selection "
+                "cannot be combined with legacy "
+                "provenance arguments."
+            )
+
+        selected_policy = intelligence_selection.policy
+        trust = intelligence_selection.trust
+        lifecycle = intelligence_selection.lifecycle
+
+    else:
+        selected_policy = intelligence_policy or default_policy()
+
+        trust = resolve_policy_trust(
+            selected_policy,
+            intelligence_trust,
+        )
+
+        lifecycle = resolve_lifecycle(
+            policy=selected_policy,
+            trust=trust,
+            supplied=None,
+        )
 
     identity = policy_identity(selected_policy)
-
-    trust = resolve_policy_trust(
-        selected_policy,
-        intelligence_trust,
-    )
-
-    lifecycle = resolve_lifecycle(
-        policy=selected_policy,
-        trust=trust,
-        supplied=intelligence_lifecycle,
-    )
 
     return EvidenceProvenance(
         report_id=str(uuid4()),

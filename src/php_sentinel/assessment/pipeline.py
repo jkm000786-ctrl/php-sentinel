@@ -6,6 +6,9 @@ from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.finding_engine import build_findings
 from php_sentinel.evidence.provenance import build_provenance
 from php_sentinel.http.client import fetch
+from php_sentinel.intelligence.activation import (
+    VerifiedIntelligenceSelection,
+)
 from php_sentinel.intelligence.cve_decision_engine import decide_cves
 from php_sentinel.intelligence.repository import (
     default_policy,
@@ -67,11 +70,40 @@ def run_unified_assessment(
     backport_status: BackportStatus = BackportStatus.UNKNOWN,
     advisory_reference: str | None = None,
     lab_validation: ValidationReport | None = None,
+    intelligence_selection: VerifiedIntelligenceSelection | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
     intelligence_trust: IntelligenceTrustDecision | None = None,
     intelligence_lifecycle: IntelligenceLifecycleDecision | None = None,
 ) -> UnifiedAssessmentReport:
-    selected_policy = intelligence_policy or default_policy()
+    if intelligence_selection is not None:
+        if any(
+            item is not None
+            for item in (
+                intelligence_policy,
+                intelligence_trust,
+                intelligence_lifecycle,
+            )
+        ):
+            raise ValueError(
+                "Verified intelligence selection "
+                "cannot be combined with legacy "
+                "intelligence arguments."
+            )
+
+        selected_policy = intelligence_selection.policy
+        provenance_selection = intelligence_selection
+
+    else:
+        if intelligence_trust is not None or intelligence_lifecycle is not None:
+            raise ValueError(
+                "Direct trust/lifecycle injection "
+                "is disabled. Use the verified "
+                "intelligence activation boundary."
+            )
+
+        selected_policy = intelligence_policy or default_policy()
+
+        provenance_selection = None
 
     vendor_evidence = build_vendor_evidence(
         vendor=vendor,
@@ -145,9 +177,8 @@ def run_unified_assessment(
     provenance = build_provenance(
         canonical_payload=canonical_payload,
         target_identity_payload=(target_identity_payload),
-        intelligence_policy=selected_policy,
-        intelligence_trust=intelligence_trust,
-        intelligence_lifecycle=intelligence_lifecycle,
+        intelligence_selection=(provenance_selection),
+        intelligence_policy=(selected_policy if provenance_selection is None else None),
     )
 
     return UnifiedAssessmentReport(
