@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+SUPPORTED_LIFECYCLE_STATE_STORE_VERSIONS = frozenset({1})
 
 
 class IntelligenceLifecycleState(
@@ -78,3 +80,16 @@ class LifecycleStateStore(BaseModel):
     ] = Field(
         default_factory=dict,
     )
+
+    @model_validator(mode="after")
+    def validate_store_version(
+        self,
+    ) -> LifecycleStateStore:
+        if self.store_version not in SUPPORTED_LIFECYCLE_STATE_STORE_VERSIONS:
+            raise ValueError(
+                "Unsupported lifecycle-state store version "
+                f"{self.store_version}. Supported versions: "
+                f"{sorted(SUPPORTED_LIFECYCLE_STATE_STORE_VERSIONS)}."
+            )
+
+        return self

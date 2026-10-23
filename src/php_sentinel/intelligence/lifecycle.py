@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -61,6 +65,212 @@ def legacy_lifecycle(
     )
 
 
+class LifecycleStateStorageError(ValueError):
+    """Raised when lifecycle rollback state cannot be handled safely."""
+
+
+LIFECYCLE_STATE_DIRECTORY_MODE = 0o700
+LIFECYCLE_STATE_FILE_MODE = 0o600
+
+LIFECYCLE_LOCK_TIMEOUT_SECONDS = 5.0
+LIFECYCLE_LOCK_POLL_SECONDS = 0.05
+LIFECYCLE_STALE_LOCK_SECONDS = 30.0
+
+
+def _secure_directory(
+    directory: Path,
+) -> None:
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+        mode=LIFECYCLE_STATE_DIRECTORY_MODE,
+    )
+
+    try:
+        directory.chmod(LIFECYCLE_STATE_DIRECTORY_MODE)
+    except OSError:
+        # Some filesystems/platforms cannot enforce POSIX mode bits.
+        # Storage still fails on actual read/write errors.
+        pass
+
+
+def _secure_file(
+    path: Path,
+) -> None:
+    try:
+        path.chmod(LIFECYCLE_STATE_FILE_MODE)
+    except OSError:
+        # Best-effort on non-POSIX filesystems.
+        pass
+
+
+def _directory_fsync(
+    directory: Path,
+) -> None:
+    flags = os.O_RDONLY
+
+    if hasattr(
+        os,
+        "O_DIRECTORY",
+    ):
+        flags |= os.O_DIRECTORY
+
+    try:
+        descriptor = os.open(
+            directory,
+            flags,
+        )
+    except OSError:
+        # Directory fsync is not available on every platform/filesystem.
+        return
+
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _lock_path(
+    state_path: Path,
+) -> Path:
+    return state_path.with_suffix(state_path.suffix + ".lock")
+
+
+def _temporary_path(
+    state_path: Path,
+) -> Path:
+    return state_path.with_suffix(state_path.suffix + ".tmp")
+
+
+def _lock_owner_is_alive(
+    lock_path: Path,
+) -> bool:
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+
+        pid = int(data["pid"])
+
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        return False
+
+    if pid <= 0:
+        return False
+
+    try:
+        os.kill(
+            pid,
+            0,
+        )
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        # Platform does not provide a reliable process-liveness probe.
+        return True
+
+    return True
+
+
+def _remove_stale_lock_if_safe(
+    lock_path: Path,
+) -> bool:
+    try:
+        stat_result = lock_path.stat()
+    except FileNotFoundError:
+        return True
+
+    age = time.time() - stat_result.st_mtime
+
+    if age < LIFECYCLE_STALE_LOCK_SECONDS:
+        return False
+
+    if _lock_owner_is_alive(lock_path):
+        return False
+
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        pass
+
+    return True
+
+
+@contextmanager
+def lifecycle_state_lock(
+    path: Path | str,
+    *,
+    timeout_seconds: float = (LIFECYCLE_LOCK_TIMEOUT_SECONDS),
+) -> Iterator[None]:
+    state_path = Path(path)
+
+    _secure_directory(state_path.parent)
+
+    lock_path = _lock_path(state_path)
+
+    deadline = time.monotonic() + timeout_seconds
+
+    descriptor: int | None = None
+
+    while descriptor is None:
+        try:
+            descriptor = os.open(
+                lock_path,
+                (os.O_WRONLY | os.O_CREAT | os.O_EXCL),
+                LIFECYCLE_STATE_FILE_MODE,
+            )
+
+        except FileExistsError:
+            if _remove_stale_lock_if_safe(lock_path):
+                continue
+
+            if time.monotonic() >= deadline:
+                raise LifecycleStateStorageError(
+                    f"Timed out acquiring lifecycle-state lock for {state_path}."
+                )
+
+            time.sleep(LIFECYCLE_LOCK_POLL_SECONDS)
+
+    try:
+        payload = json.dumps(
+            {
+                "pid": os.getpid(),
+                "created_at": (datetime.now(UTC).isoformat()),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+
+        os.write(
+            descriptor,
+            payload,
+        )
+
+        os.fsync(descriptor)
+
+        os.close(descriptor)
+
+        descriptor = None
+
+        _secure_file(lock_path)
+
+        yield
+
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def load_lifecycle_state(
     path: Path | str,
 ) -> LifecycleStateStore:
@@ -69,34 +279,99 @@ def load_lifecycle_state(
     if not state_path.exists():
         return LifecycleStateStore()
 
-    data = json.loads(state_path.read_text(encoding="utf-8"))
+    try:
+        raw = state_path.read_text(encoding="utf-8")
 
-    return LifecycleStateStore.model_validate(data)
+        data = json.loads(raw)
+
+        return LifecycleStateStore.model_validate(data)
+
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise LifecycleStateStorageError(
+            f"Lifecycle-state file is unreadable, malformed, or unsupported: {state_path}."
+        ) from exc
+
+
+def _save_lifecycle_state_unlocked(
+    path: Path | str,
+    state: LifecycleStateStore,
+) -> None:
+    state_path = Path(path)
+
+    _secure_directory(state_path.parent)
+
+    temporary = _temporary_path(state_path)
+
+    payload = (
+        json.dumps(
+            state.model_dump(mode="json"),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    descriptor: int | None = None
+
+    try:
+        descriptor = os.open(
+            temporary,
+            (os.O_WRONLY | os.O_CREAT | os.O_TRUNC),
+            LIFECYCLE_STATE_FILE_MODE,
+        )
+
+        with os.fdopen(
+            descriptor,
+            "wb",
+            closefd=True,
+        ) as handle:
+            descriptor = None
+
+            handle.write(payload)
+
+            handle.flush()
+
+            os.fsync(handle.fileno())
+
+        _secure_file(temporary)
+
+        os.replace(
+            temporary,
+            state_path,
+        )
+
+        _secure_file(state_path)
+
+        _directory_fsync(state_path.parent)
+
+    except OSError as exc:
+        raise LifecycleStateStorageError(
+            f"Failed to durably write lifecycle-state file {state_path}."
+        ) from exc
+
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def save_lifecycle_state(
     path: Path | str,
     state: LifecycleStateStore,
 ) -> None:
-    state_path = Path(path)
-
-    state_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    temporary = state_path.with_suffix(state_path.suffix + ".tmp")
-
-    temporary.write_text(
-        json.dumps(
-            state.model_dump(mode="json"),
-            indent=2,
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-
-    temporary.replace(state_path)
+    with lifecycle_state_lock(path):
+        _save_lifecycle_state_unlocked(
+            path,
+            state,
+        )
 
 
 def evaluate_lifecycle(
@@ -254,24 +529,51 @@ def record_accepted_lifecycle(
     path: Path | str,
     policy: IntelligencePolicy,
     lifecycle: IntelligenceLifecycleDecision,
+    expected_state: LifecycleStateStore | None = None,
     now: datetime | None = None,
 ) -> None:
     if not lifecycle.activatable or lifecycle.generation is None or lifecycle.signer_id is None:
         raise ValueError("Only an activatable external lifecycle decision can be recorded.")
 
-    state = load_lifecycle_state(path)
+    with lifecycle_state_lock(path):
+        current_state = load_lifecycle_state(path)
 
-    state.records[policy.policy_id] = LifecycleStateRecord(
-        generation=lifecycle.generation,
-        policy_sha256=(lifecycle.policy_sha256),
-        signer_id=lifecycle.signer_id,
-        accepted_at=(now or datetime.now(UTC)),
-    )
+        if expected_state is not None and current_state.model_dump(
+            mode="json"
+        ) != expected_state.model_dump(mode="json"):
+            raise LifecycleStateStorageError(
+                "Lifecycle-state changed concurrently after evaluation; activation must be retried."
+            )
 
-    save_lifecycle_state(
-        path,
-        state,
-    )
+        existing = current_state.records.get(policy.policy_id)
+
+        if existing is not None:
+            if lifecycle.generation < existing.generation:
+                raise LifecycleStateStorageError(
+                    "Refusing to persist a lifecycle generation "
+                    "lower than the currently recorded generation."
+                )
+
+            if (
+                lifecycle.generation == existing.generation
+                and lifecycle.policy_sha256 != existing.policy_sha256
+            ):
+                raise LifecycleStateStorageError(
+                    "Refusing to persist a different policy digest "
+                    "for an already recorded lifecycle generation."
+                )
+
+        current_state.records[policy.policy_id] = LifecycleStateRecord(
+            generation=(lifecycle.generation),
+            policy_sha256=(lifecycle.policy_sha256),
+            signer_id=(lifecycle.signer_id),
+            accepted_at=(now or datetime.now(UTC)),
+        )
+
+        _save_lifecycle_state_unlocked(
+            path,
+            current_state,
+        )
 
 
 def resolve_lifecycle(

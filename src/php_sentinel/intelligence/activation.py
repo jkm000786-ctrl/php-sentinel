@@ -162,6 +162,7 @@ def activate_intelligence_with_lifecycle(
                 path=lifecycle_state_path,
                 policy=policy,
                 lifecycle=lifecycle,
+                expected_state=state,
                 now=now,
             )
 
