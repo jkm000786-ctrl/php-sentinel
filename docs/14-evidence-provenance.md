@@ -22,9 +22,12 @@ The canonical SHA-256 is calculated over stable assessment material:
 - CVE decisions,
 - findings.
 
-The unique report ID and generation timestamp are intentionally
-excluded from that digest so equivalent evidence produces the same
-canonical evidence hash.
+The unique report ID, generation timestamp, and nested observation
+timestamps are intentionally excluded from that digest so equivalent
+material evidence produces the same canonical evidence hash.
+
+Volatile audit metadata remains present in the report itself; it is
+excluded only from canonical evidence-equivalence hashing.
 
 ## Target identity hash
 

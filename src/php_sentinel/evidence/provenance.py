@@ -17,9 +17,35 @@ def tool_version() -> str:
         return "unknown"
 
 
+VOLATILE_CANONICAL_FIELDS = {
+    "generated_at",
+    "observed_at",
+    "report_id",
+}
+
+
+def _stable_payload(value):
+    if isinstance(value, dict):
+        return {
+            key: _stable_payload(item)
+            for key, item in value.items()
+            if key not in VOLATILE_CANONICAL_FIELDS
+        }
+
+    if isinstance(value, list):
+        return [_stable_payload(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_stable_payload(item) for item in value)
+
+    return value
+
+
 def _canonical_json(payload: dict) -> bytes:
+    stable = _stable_payload(payload)
+
     return json.dumps(
-        payload,
+        stable,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
