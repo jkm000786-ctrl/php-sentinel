@@ -841,10 +841,52 @@ def promote_verified_candidate(
         exist_ok=True,
     )
 
-    final_directory = root / _candidate_cache_name(candidate)
+    try:
+        resolved_root = root.resolve(strict=True)
+    except OSError as exc:
+        raise IntelligenceUpdatePromotionError(
+            "Verified cache root could not be resolved."
+        ) from exc
+
+    if not resolved_root.is_dir():
+        raise IntelligenceUpdatePromotionError("Verified cache root is not a directory.")
+
+    final_directory = resolved_root / _candidate_cache_name(candidate)
+
+    try:
+        final_parent = final_directory.parent.resolve(strict=True)
+    except OSError as exc:
+        raise IntelligenceUpdatePromotionError(
+            "Verified cache destination parent could not be resolved."
+        ) from exc
+
+    if final_parent != resolved_root:
+        raise IntelligenceUpdatePromotionError(
+            "Verified cache destination escaped its configured root."
+        )
+
+    if final_directory.is_symlink():
+        raise IntelligenceUpdatePromotionError(
+            "Verified cache destination must not be a symbolic link."
+        )
 
     if final_directory.exists():
-        existing_policy = final_directory / VERIFIED_POLICY_FILENAME
+        try:
+            resolved_final = final_directory.resolve(strict=True)
+        except OSError as exc:
+            raise IntelligenceUpdatePromotionError(
+                "Verified cache destination could not be resolved."
+            ) from exc
+
+        if resolved_final.parent != resolved_root:
+            raise IntelligenceUpdatePromotionError(
+                "Verified cache destination escaped its configured root."
+            )
+
+        if not resolved_final.is_dir():
+            raise IntelligenceUpdatePromotionError("Verified cache destination is not a directory.")
+
+        existing_policy = resolved_final / VERIFIED_POLICY_FILENAME
 
         existing_manifest = final_directory / VERIFIED_MANIFEST_FILENAME
 
@@ -854,7 +896,7 @@ def promote_verified_candidate(
             and existing_policy.read_bytes() == policy_bytes
             and existing_manifest.read_bytes() == manifest_bytes
         ):
-            return final_directory
+            return resolved_final
 
         raise IntelligenceUpdatePromotionError(
             "Verified cache destination already exists with different content."
@@ -863,7 +905,7 @@ def promote_verified_candidate(
     temporary = Path(
         tempfile.mkdtemp(
             prefix=".verified-update-",
-            dir=root,
+            dir=resolved_root,
         )
     )
 

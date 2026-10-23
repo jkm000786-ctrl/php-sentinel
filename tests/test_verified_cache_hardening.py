@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
 )
+from pydantic import ValidationError
 
 from php_sentinel.intelligence.activation import (
     IntelligenceActivationError,
@@ -23,6 +24,7 @@ from php_sentinel.intelligence.trust import (
     create_signed_manifest,
 )
 from php_sentinel.intelligence.update import (
+    IntelligenceUpdatePromotionError,
     IntelligenceVerifiedCacheError,
     VerifiedUpdateCandidate,
     activate_cached_intelligence,
@@ -576,3 +578,137 @@ def test_cache_entry_exposes_descriptive_source_transport_provenance(
     assert entry.source_manifest_url == metadata["source_manifest_url"]
     assert entry.staged_policy_transport_sha256 == metadata["staged_policy_transport_sha256"]
     assert entry.staged_manifest_transport_sha256 == metadata["staged_manifest_transport_sha256"]
+
+
+@pytest.mark.parametrize(
+    "policy_id",
+    [
+        "../escape",
+        "../../outside",
+        "/absolute",
+        "nested/name",
+        ".",
+        "..",
+        "name with spaces",
+        "a" * 129,
+    ],
+)
+def test_policy_id_rejects_filesystem_ambiguous_identity(
+    policy_id,
+):
+    policy = default_policy()
+
+    data = policy.model_dump(mode="json")
+    data["policy_id"] = policy_id
+
+    with pytest.raises(ValidationError):
+        policy.__class__.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "policy_id",
+    [
+        "safe-policy",
+        "safe_policy.v1",
+        "php-2026-10-critical",
+    ],
+)
+def test_policy_id_accepts_canonical_identity(
+    policy_id,
+):
+    policy = default_policy()
+
+    data = policy.model_dump(mode="json")
+    data["policy_id"] = policy_id
+
+    validated = policy.__class__.model_validate(data)
+
+    assert validated.policy_id == policy_id
+
+
+def test_verified_cache_promotion_returns_path_under_resolved_root(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        verified_root,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    assert destination.parent == verified_root.resolve()
+    assert destination.is_relative_to(verified_root.resolve())
+
+
+def test_promotion_rejects_symlink_cache_destination(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    shutil.rmtree(destination)
+
+    destination.symlink_to(
+        outside,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(
+        IntelligenceUpdatePromotionError,
+        match="symbolic link",
+    ):
+        create_cached_entry(
+            tmp_path,
+            generation=5,
+        )
+
+
+def test_promotion_rejects_existing_non_directory_cache_destination(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    shutil.rmtree(destination)
+    destination.write_text(
+        "not-a-directory",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        IntelligenceUpdatePromotionError,
+        match="not a directory",
+    ):
+        create_cached_entry(
+            tmp_path,
+            generation=5,
+        )
