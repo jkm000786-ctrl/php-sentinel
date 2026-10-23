@@ -48,6 +48,91 @@ def _validate_strict_base64_length(
     return value
 
 
+class SignerDelegation(BaseModel):
+    delegation_version: int = Field(
+        default=1,
+        ge=1,
+    )
+
+    context: str = Field(
+        pattern=r"^(intelligence|registry)$",
+    )
+
+    predecessor_signer_id: str = Field(
+        min_length=1,
+    )
+
+    successor_signer_id: str = Field(
+        min_length=1,
+    )
+
+    successor_public_key_b64: str = Field(
+        min_length=1,
+    )
+
+    sequence: int = Field(
+        ge=1,
+    )
+
+    minimum_successor_generation: int = Field(
+        ge=1,
+    )
+
+    issued_at: datetime
+    expires_at: datetime
+
+    algorithm: str = "ed25519"
+
+    signature_b64: str = Field(
+        min_length=1,
+    )
+
+    @field_validator("successor_public_key_b64")
+    @classmethod
+    def validate_successor_public_key(
+        cls,
+        value: str,
+    ) -> str:
+        return _validate_strict_base64_length(
+            value,
+            expected_length=(ED25519_PUBLIC_KEY_BYTES),
+            field_name=("successor_public_key_b64"),
+        )
+
+    @field_validator("signature_b64")
+    @classmethod
+    def validate_delegation_signature(
+        cls,
+        value: str,
+    ) -> str:
+        return _validate_strict_base64_length(
+            value,
+            expected_length=(ED25519_SIGNATURE_BYTES),
+            field_name="signature_b64",
+        )
+
+    @model_validator(mode="after")
+    def validate_delegation(
+        self,
+    ) -> SignerDelegation:
+        if self.delegation_version != 1:
+            raise ValueError("Unsupported signer-delegation version.")
+
+        if self.predecessor_signer_id == self.successor_signer_id:
+            raise ValueError("A signer cannot delegate rotation to itself.")
+
+        if self.issued_at.tzinfo is None:
+            raise ValueError("Delegation issued_at requires timezone information.")
+
+        if self.expires_at.tzinfo is None:
+            raise ValueError("Delegation expires_at requires timezone information.")
+
+        if self.expires_at <= self.issued_at:
+            raise ValueError("Delegation expires_at must be later than issued_at.")
+
+        return self
+
+
 class IntelligenceManifest(BaseModel):
     manifest_version: int = Field(
         default=3,
@@ -159,6 +244,10 @@ class TrustStore(BaseModel):
         default_factory=list,
     )
 
+    delegations: list[SignerDelegation] = Field(
+        default_factory=list,
+    )
+
     @model_validator(mode="after")
     def validate_store(
         self,
@@ -179,6 +268,19 @@ class TrustStore(BaseModel):
             if signer.signer_id in signer.authorized_predecessors:
                 raise ValueError("A signer cannot authorize itself as a predecessor.")
 
+        delegation_ids = [
+            (
+                item.context,
+                item.predecessor_signer_id,
+                item.successor_signer_id,
+                item.sequence,
+            )
+            for item in self.delegations
+        ]
+
+        if len(delegation_ids) != len(set(delegation_ids)):
+            raise ValueError("Signer delegation identity tuples must be unique.")
+
         return self
 
 
@@ -194,6 +296,13 @@ class IntelligenceTrustDecision(BaseModel):
 
     authorized_predecessor_signer_ids: list[str] = Field(
         default_factory=list,
+    )
+
+    authorized_predecessor_minimum_generations: dict[
+        str,
+        int,
+    ] = Field(
+        default_factory=dict,
     )
 
     rationale: list[str] = Field(

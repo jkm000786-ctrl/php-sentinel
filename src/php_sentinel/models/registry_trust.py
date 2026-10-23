@@ -108,6 +108,13 @@ class SourceRegistryTrustDecision(BaseModel):
         default_factory=list,
     )
 
+    authorized_predecessor_minimum_generations: dict[
+        str,
+        int,
+    ] = Field(
+        default_factory=dict,
+    )
+
     rationale: list[str] = Field(
         default_factory=list,
     )

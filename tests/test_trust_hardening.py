@@ -10,6 +10,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from php_sentinel.intelligence.activation import (
     VerifiedIntelligenceSelection,
 )
+from php_sentinel.intelligence.delegation import (
+    create_signed_signer_delegation,
+)
 from php_sentinel.intelligence.lifecycle import (
     bundled_lifecycle,
     evaluate_lifecycle,
@@ -280,18 +283,37 @@ def test_authorized_signer_rotation_is_accepted():
         expires_at=(NOW + timedelta(days=10)),
     )
 
+    delegation = create_signed_signer_delegation(
+        context="intelligence",
+        predecessor_signer_id="old-signer",
+        predecessor_private_key_b64=old_private,
+        successor_signer_id="new-signer",
+        successor_public_key_b64=new_public,
+        sequence=1,
+        minimum_successor_generation=6,
+        issued_at=NOW,
+        expires_at=(NOW + timedelta(days=10)),
+    )
+
     new_trust = verify_manifest(
         policy,
         new_manifest,
         TrustStore(
             signers=[
                 TrustedSigner(
+                    signer_id="old-signer",
+                    public_key_b64=(old_public),
+                ),
+                TrustedSigner(
                     signer_id="new-signer",
                     public_key_b64=(new_public),
+                    # Compatibility metadata must no longer be authority.
                     authorized_predecessors=["old-signer"],
-                )
-            ]
+                ),
+            ],
+            delegations=[delegation],
         ),
+        now=NOW,
     )
 
     decision = evaluate_lifecycle(

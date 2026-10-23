@@ -13,6 +13,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from php_sentinel.intelligence.delegation import (
+    resolve_authorized_predecessors,
+)
 from php_sentinel.intelligence.repository import (
     default_policy,
     load_policy,
@@ -184,6 +187,8 @@ def verify_manifest(
     policy: IntelligencePolicy,
     manifest: IntelligenceManifest,
     trust_store: TrustStore,
+    *,
+    now: datetime | None = None,
 ) -> IntelligenceTrustDecision:
     digest = policy_sha256(policy)
 
@@ -301,6 +306,28 @@ def verify_manifest(
     else:
         rationale.append("This is a legacy pre-domain-separation manifest signature.")
 
+    (
+        authorized_predecessors,
+        predecessor_minimum_generations,
+    ) = resolve_authorized_predecessors(
+        trust_store=trust_store,
+        successor_signer_id=(manifest.signer_id),
+        successor_public_key_b64=(signer.public_key_b64),
+        context="intelligence",
+        now=now,
+    )
+
+    if signer.authorized_predecessors:
+        rationale.append(
+            "Legacy authorized_predecessors metadata is present "
+            "but is not accepted as rotation authority."
+        )
+
+    if authorized_predecessors:
+        rationale.append(
+            "Signer rotation authorization was established by valid predecessor-signed delegation."
+        )
+
     return IntelligenceTrustDecision(
         state=IntelligenceTrustState.TRUSTED,
         trusted=True,
@@ -308,7 +335,8 @@ def verify_manifest(
         policy_sha256=digest,
         signer_id=manifest.signer_id,
         algorithm=manifest.algorithm,
-        authorized_predecessor_signer_ids=(list(signer.authorized_predecessors)),
+        authorized_predecessor_signer_ids=(authorized_predecessors),
+        authorized_predecessor_minimum_generations=(predecessor_minimum_generations),
         rationale=rationale,
     )
 

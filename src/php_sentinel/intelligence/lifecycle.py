@@ -465,8 +465,14 @@ def evaluate_lifecycle(
 
     if record is not None:
         if trust.signer_id != record.signer_id:
+            delegated_minimum = trust.authorized_predecessor_minimum_generations.get(
+                record.signer_id
+            )
+
             rotation_authorized = (
-                record.signer_id in (trust.authorized_predecessor_signer_ids)
+                record.signer_id in trust.authorized_predecessor_signer_ids
+                and delegated_minimum is not None
+                and manifest.generation >= delegated_minimum
                 and manifest.generation > record.generation
             )
 

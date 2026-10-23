@@ -13,6 +13,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from php_sentinel.intelligence.delegation import (
+    resolve_authorized_predecessors,
+)
 from php_sentinel.intelligence.lifecycle import (
     lifecycle_state_lock,
 )
@@ -217,6 +220,7 @@ def verify_source_registry_manifest(
     registry: IntelligenceSourceRegistry,
     manifest: SourceRegistryManifest,
     trust_store: TrustStore,
+    now: datetime | None = None,
 ) -> SourceRegistryTrustDecision:
     digest = source_registry_sha256(registry)
 
@@ -305,19 +309,42 @@ def verify_source_registry_manifest(
             rationale=["Registry Ed25519 signature verification failed."],
         )
 
+    (
+        authorized_predecessors,
+        predecessor_minimum_generations,
+    ) = resolve_authorized_predecessors(
+        trust_store=trust_store,
+        successor_signer_id=(manifest.signer_id),
+        successor_public_key_b64=(signer.public_key_b64),
+        context="registry",
+        now=now,
+    )
+
+    rationale = [
+        "Registry digest matches the signed manifest.",
+        ("Registry Ed25519 signature verified against the dedicated local registry trust store."),
+        ("Registry signature uses the PHP Sentinel source-registry domain separator."),
+    ]
+
+    if signer.authorized_predecessors:
+        rationale.append(
+            "Legacy authorized_predecessors metadata is present "
+            "but is not accepted as registry rotation authority."
+        )
+
+    if authorized_predecessors:
+        rationale.append(
+            "Registry signer rotation authorization was "
+            "established by valid predecessor-signed delegation."
+        )
+
     return SourceRegistryTrustDecision(
         state=SourceRegistryTrustState.TRUSTED,
         trusted=True,
         **base,
-        authorized_predecessor_signer_ids=(list(signer.authorized_predecessors)),
-        rationale=[
-            "Registry digest matches the signed manifest.",
-            (
-                "Registry Ed25519 signature verified against the "
-                "dedicated local registry trust store."
-            ),
-            ("Registry signature uses the PHP Sentinel source-registry domain separator."),
-        ],
+        authorized_predecessor_signer_ids=(authorized_predecessors),
+        authorized_predecessor_minimum_generations=(predecessor_minimum_generations),
+        rationale=rationale,
     )
 
 
@@ -388,8 +415,14 @@ def evaluate_source_registry_lifecycle(
 
     if record is not None:
         if trust.signer_id != record.signer_id:
+            delegated_minimum = trust.authorized_predecessor_minimum_generations.get(
+                record.signer_id
+            )
+
             rotation_authorized = (
                 record.signer_id in trust.authorized_predecessor_signer_ids
+                and delegated_minimum is not None
+                and manifest.generation >= delegated_minimum
                 and manifest.generation > record.generation
             )
 
@@ -671,6 +704,7 @@ def verify_signed_source_registry(
         registry=registry,
         manifest=manifest,
         trust_store=trust_store,
+        now=now,
     )
 
     if not trust.trusted:
