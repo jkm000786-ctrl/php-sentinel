@@ -1,0 +1,17 @@
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: docker/scanner/Dockerfile
+    working_dir: /app
+    volumes:
+      - ./output:/app/output
+    entrypoint: ["php-sentinel"]
+
+  patched-php:
+    image: php:8.5.12-apache
+    profiles: ["lab"]
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./lab/patched/index.php:/var/www/html/index.php:ro

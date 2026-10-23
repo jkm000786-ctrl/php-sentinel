@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: php-sentinel
+Version: 0.1.0
+Summary: Evidence-driven PHP vulnerability exposure assessment
+Requires-Python: >=3.11
+Requires-Dist: httpx<1,>=0.28
+Requires-Dist: pydantic<3,>=2.10
+Requires-Dist: typer<1,>=0.15
+Requires-Dist: rich<15,>=13.9
+Requires-Dist: packaging<26,>=24.2
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8.3; extra == "dev"
+Requires-Dist: pytest-cov<7,>=6; extra == "dev"
+Requires-Dist: ruff<1,>=0.9; extra == "dev"

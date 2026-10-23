@@ -1,0 +1,10 @@
+httpx<1,>=0.28
+pydantic<3,>=2.10
+typer<1,>=0.15
+rich<15,>=13.9
+packaging<26,>=24.2
+
+[dev]
+pytest<9,>=8.3
+pytest-cov<7,>=6
+ruff<1,>=0.9
