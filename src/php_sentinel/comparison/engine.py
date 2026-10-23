@@ -44,6 +44,8 @@ def _transition(
 def compare_reports(
     before: UnifiedAssessmentReport,
     after: UnifiedAssessmentReport,
+    *,
+    allow_cross_target: bool = False,
 ) -> ComparisonReport:
     before_findings = {finding.cve_id: finding for finding in before.findings}
 
@@ -95,6 +97,9 @@ def compare_reports(
         overall = ComparisonState.EVIDENCE_CHANGED
 
     same_requested_target = before.http.requested_url == after.http.requested_url
+
+    if not same_requested_target and not allow_cross_target:
+        overall = ComparisonState.INCOMPARABLE
 
     same_target_identity = (
         before.provenance.target_identity_sha256 == after.provenance.target_identity_sha256
@@ -150,6 +155,14 @@ def compare_reports(
         changes.append(
             f"Requested target changed: {before.http.requested_url} -> {after.http.requested_url}."
         )
+
+        if allow_cross_target:
+            changes.append("Cross-target comparison was explicitly authorized by the operator.")
+        else:
+            changes.append(
+                "Overall remediation/regression classification was suppressed "
+                "because the reports refer to different requested targets."
+            )
 
     return ComparisonReport(
         before_report_id=before.provenance.report_id,

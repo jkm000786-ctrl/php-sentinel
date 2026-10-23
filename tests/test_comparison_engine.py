@@ -111,3 +111,62 @@ def test_same_evidence_is_unchanged(
     assert result.overall_state.value == "unchanged"
 
     assert result.same_canonical_evidence is True
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_different_targets_are_incomparable_by_default(
+    mock_fetch,
+):
+    mock_fetch.side_effect = [
+        response("8.5.11"),
+        response("8.5.12"),
+    ]
+
+    before = run_unified_assessment(
+        "http://127.0.0.1:18081/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    after = run_unified_assessment(
+        "http://127.0.0.1:18080/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    result = compare_reports(
+        before,
+        after,
+    )
+
+    assert result.same_requested_target is False
+    assert result.overall_state.value == "incomparable"
+
+    assert all(change.transition.value == "remediated" for change in result.cve_changes)
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_cross_target_override_allows_lab_comparison(
+    mock_fetch,
+):
+    mock_fetch.side_effect = [
+        response("8.5.11"),
+        response("8.5.12"),
+    ]
+
+    before = run_unified_assessment(
+        "http://127.0.0.1:18081/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    after = run_unified_assessment(
+        "http://127.0.0.1:18080/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    result = compare_reports(
+        before,
+        after,
+        allow_cross_target=True,
+    )
+
+    assert result.same_requested_target is False
+    assert result.overall_state.value == "remediated"

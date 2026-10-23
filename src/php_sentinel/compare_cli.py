@@ -46,6 +46,13 @@ def main(
             help="Emit comparison JSON.",
         ),
     ] = False,
+    allow_cross_target: Annotated[
+        bool,
+        typer.Option(
+            "--allow-cross-target",
+            help=("Explicitly permit comparison of reports whose requested targets differ."),
+        ),
+    ] = False,
 ) -> None:
     before_report = load_report(before)
     after_report = load_report(after)
@@ -53,6 +60,7 @@ def main(
     result = compare_reports(
         before_report,
         after_report,
+        allow_cross_target=allow_cross_target,
     )
 
     if json_output:
