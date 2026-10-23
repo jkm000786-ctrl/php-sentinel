@@ -101,7 +101,20 @@ def assess_response(
         return result
 
     policy = evaluate_version(detection.version)
-    result.rationale.append(policy.rationale)
+
+    if (
+        vendor_evidence
+        and vendor_evidence.vendor.value == "upstream"
+        and policy.upstream_fixed is False
+        and detection.version
+    ):
+        result.rationale.append(
+            f"PHP {detection.version} is below the upstream fixed "
+            "threshold; this upstream build does not have vendor "
+            "backport ambiguity."
+        )
+    else:
+        result.rationale.append(policy.rationale)
 
     applicability = evaluate_oct_2026_applicability(
         php_detected=detection.detected,

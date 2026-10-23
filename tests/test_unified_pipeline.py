@@ -87,3 +87,21 @@ def test_unified_report_does_not_store_body(mock_fetch):
 
     assert secret_marker not in serialized
     assert report.http.body_length == len(secret_marker.encode())
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_upstream_candidate_has_no_backport_contradiction(mock_fetch):
+    mock_fetch.return_value = response(
+        "8.5.11",
+        "candidate",
+    )
+
+    report = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    rationale = " ".join(report.assessment.rationale).lower()
+
+    assert "vendor backport ambiguity" in rationale
+    assert "vendor may have backported" not in rationale
