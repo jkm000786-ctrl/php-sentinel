@@ -14,7 +14,7 @@ services:
       - php-sentinel-lab
     profiles: ["lab"]
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:18080:80"
     volumes:
       - ./lab/patched/index.php:/var/www/html/index.php:ro
 
@@ -32,4 +32,4 @@ services:
 
 networks:
   php-sentinel-lab:
-    internal: true
+    driver: bridge
