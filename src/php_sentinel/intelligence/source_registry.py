@@ -566,6 +566,14 @@ def activate_registry_cached_intelligence_from_registry(
         policy_id=policy_id,
     )
 
+    if (
+        entry.source_policy_url != selection.policy_url
+        or entry.source_manifest_url != selection.manifest_url
+    ):
+        raise IntelligenceSourceRegistryError(
+            "Cached intelligence provenance does not match the current source/channel URL policy."
+        )
+
     if entry.signer_id not in selection.allowed_signer_ids:
         raise IntelligenceSourceRegistryError(
             "Cached signer is not authorized by the selected source."

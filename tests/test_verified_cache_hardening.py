@@ -358,7 +358,7 @@ def test_conflicting_same_generation_fails_closed(
 
     with pytest.raises(
         IntelligenceVerifiedCacheError,
-        match="Conflicting verified-cache",
+        match=("Verified cache descriptive metadata is inconsistent|Conflicting verified-cache"),
     ):
         discover_verified_cache(verified_root)
 
@@ -509,3 +509,70 @@ def test_metadata_identity_tampering_is_rejected(
         match="metadata is inconsistent",
     ):
         discover_verified_cache(destination.parent)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "staged_policy_transport_sha256",
+        "staged_manifest_transport_sha256",
+    ],
+)
+def test_cached_transport_digest_metadata_tampering_is_rejected(
+    tmp_path,
+    field,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    path = destination / "verification.json"
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+
+    metadata[field] = "0" * 64
+
+    path.write_text(
+        json.dumps(metadata),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="metadata is inconsistent",
+    ):
+        discover_verified_cache(destination.parent)
+
+
+def test_cache_entry_exposes_descriptive_source_transport_provenance(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        verified_root,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    [entry] = discover_verified_cache(verified_root)
+
+    metadata = json.loads((destination / "verification.json").read_text(encoding="utf-8"))
+
+    assert entry.source_policy_url == metadata["source_policy_url"]
+    assert entry.source_manifest_url == metadata["source_manifest_url"]
+    assert entry.staged_policy_transport_sha256 == metadata["staged_policy_transport_sha256"]
+    assert entry.staged_manifest_transport_sha256 == metadata["staged_manifest_transport_sha256"]

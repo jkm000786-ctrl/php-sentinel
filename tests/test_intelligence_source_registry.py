@@ -645,3 +645,60 @@ def test_url_containment_allows_nonstructural_percent_encoding():
         base_url="https://updates.example.test/intel/",
         candidate_url=("https://updates.example.test/intel/release%20notes/policy.json"),
     )
+
+
+def test_registry_cache_activation_rejects_stale_source_urls(
+    tmp_path,
+):
+    (
+        registry_path,
+        trust_path,
+        stage,
+        _,
+    ) = setup_source_bundle(
+        tmp_path,
+        generation=5,
+    )
+
+    state_path = tmp_path / "lifecycle.json"
+
+    candidate = verify_registry_staged_bundle(
+        registry_path=registry_path,
+        source_id="official",
+        channel="stable",
+        staging_directory=stage,
+        trust_store_path=trust_path,
+        lifecycle_state_path=state_path,
+        now=NOW,
+    )
+
+    destination = promote_registry_candidate(
+        candidate=candidate,
+        verified_root=(tmp_path / "verified"),
+        expected_source_id="official",
+        expected_channel="stable",
+    )
+
+    assert destination.exists()
+
+    changed_registry = registry_model()
+    changed_registry.sources[0].base_url = "https://updates.example.test/new-intel/"
+
+    registry_path.write_text(
+        json.dumps(changed_registry.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        IntelligenceSourceRegistryError,
+        match="current source/channel URL policy",
+    ):
+        activate_registry_cached_intelligence(
+            registry_path=registry_path,
+            source_id="official",
+            channel="stable",
+            verified_root=(tmp_path / "verified"),
+            trust_store_path=trust_path,
+            lifecycle_state_path=state_path,
+            now=NOW,
+        )

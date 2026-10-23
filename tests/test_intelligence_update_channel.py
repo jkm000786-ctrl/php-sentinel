@@ -388,7 +388,7 @@ def test_staged_transport_tampering_is_detected(
 
     with pytest.raises(
         IntelligenceUpdateVerificationError,
-        match="transport digest changed",
+        match=r"transport (?:byte count|digest) changed",
     ):
         verify_staged_bundle(
             staging_directory=stage,
@@ -511,3 +511,73 @@ def test_verification_reads_state_without_advancing_it(
     assert candidate.lifecycle.generation == 6
 
     assert persisted.records[policy.policy_id].generation == 5
+
+
+def test_staged_policy_byte_count_metadata_tampering_is_detected(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        metadata,
+        stage,
+        trust_path,
+        state_path,
+    ) = stage_valid_bundle(tmp_path)
+
+    tampered = metadata.model_copy(
+        update={
+            "policy_bytes": metadata.policy_bytes + 1,
+        }
+    )
+
+    (stage / "stage-metadata.json").write_text(
+        json.dumps(tampered.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        IntelligenceUpdateVerificationError,
+        match="policy transport byte count changed",
+    ):
+        verify_staged_bundle(
+            staging_directory=stage,
+            trust_store_path=trust_path,
+            lifecycle_state_path=state_path,
+            now=NOW,
+        )
+
+
+def test_staged_manifest_byte_count_metadata_tampering_is_detected(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        metadata,
+        stage,
+        trust_path,
+        state_path,
+    ) = stage_valid_bundle(tmp_path)
+
+    tampered = metadata.model_copy(
+        update={
+            "manifest_bytes": metadata.manifest_bytes + 1,
+        }
+    )
+
+    (stage / "stage-metadata.json").write_text(
+        json.dumps(tampered.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        IntelligenceUpdateVerificationError,
+        match="manifest transport byte count changed",
+    ):
+        verify_staged_bundle(
+            staging_directory=stage,
+            trust_store_path=trust_path,
+            lifecycle_state_path=state_path,
+            now=NOW,
+        )

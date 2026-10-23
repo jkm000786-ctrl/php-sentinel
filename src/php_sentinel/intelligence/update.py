@@ -640,6 +640,16 @@ def _validate_staged_transport_integrity(
             "Staged intelligence bundle is incomplete."
         ) from exc
 
+    if len(policy_bytes) != metadata.policy_bytes:
+        raise IntelligenceUpdateVerificationError(
+            "Staged policy transport byte count changed after download."
+        )
+
+    if len(manifest_bytes) != metadata.manifest_bytes:
+        raise IntelligenceUpdateVerificationError(
+            "Staged manifest transport byte count changed after download."
+        )
+
     if _sha256_bytes(policy_bytes) != metadata.policy_transport_sha256:
         raise IntelligenceUpdateVerificationError(
             "Staged policy transport digest changed after download."
@@ -982,6 +992,8 @@ def inspect_verified_cache_entry(
         and metadata.manifest_version == manifest.manifest_version
         and metadata.generation == manifest.generation
         and metadata.signer_id == manifest.signer_id
+        and metadata.staged_policy_transport_sha256 == _sha256_bytes(policy_bytes)
+        and metadata.staged_manifest_transport_sha256 == _sha256_bytes(manifest_bytes)
     )
 
     if not metadata_consistent:
@@ -1001,6 +1013,10 @@ def inspect_verified_cache_entry(
         signer_id=(manifest.signer_id),
         source_id=metadata.source_id,
         channel=metadata.channel,
+        source_policy_url=metadata.source_policy_url,
+        source_manifest_url=metadata.source_manifest_url,
+        staged_policy_transport_sha256=(metadata.staged_policy_transport_sha256),
+        staged_manifest_transport_sha256=(metadata.staged_manifest_transport_sha256),
         bundle_sha256=(bundle_digest),
         verification_metadata_present=True,
         verification_metadata_consistent=True,

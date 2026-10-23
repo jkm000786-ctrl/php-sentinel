@@ -109,6 +109,16 @@ class IntelligenceVerifiedCacheEntry(BaseModel):
     source_id: str | None = None
     channel: str | None = None
 
+    source_policy_url: str
+    source_manifest_url: str
+
+    staged_policy_transport_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    staged_manifest_transport_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
     bundle_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
     )
