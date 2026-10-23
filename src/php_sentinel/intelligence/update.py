@@ -11,6 +11,10 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from php_sentinel.intelligence.activation import (
+    VerifiedIntelligenceSelection,
+    activate_verified_intelligence,
+)
 from php_sentinel.intelligence.lifecycle import (
     evaluate_lifecycle,
     load_lifecycle_state,
@@ -39,6 +43,7 @@ from php_sentinel.models.intelligence_trust import (
 from php_sentinel.models.intelligence_update import (
     IntelligenceUpdateStageMetadata,
     IntelligenceUpdateVerificationMetadata,
+    IntelligenceVerifiedCacheEntry,
 )
 
 DEFAULT_UPDATE_MAX_BYTES = 2 * 1024 * 1024
@@ -67,6 +72,10 @@ class IntelligenceUpdateVerificationError(IntelligenceUpdateError):
 
 class IntelligenceUpdatePromotionError(IntelligenceUpdateError):
     """Raised when verified intelligence cannot be promoted."""
+
+
+class IntelligenceVerifiedCacheError(IntelligenceUpdateError):
+    """Raised when verified-cache inspection fails closed."""
 
 
 _UPDATE_CAPABILITY = object()
@@ -638,3 +647,302 @@ def promote_verified_candidate(
             )
 
     return final_directory
+
+
+def _load_verification_metadata(
+    cache_directory: Path,
+) -> IntelligenceUpdateVerificationMetadata:
+    path = cache_directory / VERIFICATION_METADATA_FILENAME
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+
+        metadata = IntelligenceUpdateVerificationMetadata.model_validate(data)
+
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache metadata is missing, malformed, or unsupported: {cache_directory}."
+        ) from exc
+
+    if metadata.metadata_version != 1:
+        raise IntelligenceVerifiedCacheError("Unsupported verified-cache metadata version.")
+
+    return metadata
+
+
+def inspect_verified_cache_entry(
+    cache_directory: Path | str,
+) -> IntelligenceVerifiedCacheEntry:
+    """
+    Inspect cached bytes without assigning trust.
+
+    verification.json is checked for consistency but is never accepted
+    as cryptographic or lifecycle authority.
+    """
+
+    directory = Path(cache_directory)
+
+    if not directory.is_dir():
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache entry is not a directory: {directory}."
+        )
+
+    policy_path = directory / VERIFIED_POLICY_FILENAME
+
+    manifest_path = directory / VERIFIED_MANIFEST_FILENAME
+
+    try:
+        policy_bytes = policy_path.read_bytes()
+
+        manifest_bytes = manifest_path.read_bytes()
+
+        policy = load_policy(policy_path)
+
+        manifest = load_manifest(manifest_path)
+
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache entry contains unreadable or invalid "
+            f"policy/manifest data: {directory}."
+        ) from exc
+
+    digest = policy_sha256(policy)
+
+    if (
+        manifest.policy_id != policy.policy_id
+        or manifest.schema_version != policy.schema_version
+        or manifest.policy_sha256 != digest
+    ):
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache policy and manifest identity do not match."
+        )
+
+    if manifest.generation is None:
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache manifest lacks a lifecycle generation."
+        )
+
+    metadata = _load_verification_metadata(directory)
+
+    metadata_consistent = (
+        metadata.policy_id == policy.policy_id
+        and metadata.policy_sha256 == digest
+        and metadata.manifest_version == manifest.manifest_version
+        and metadata.generation == manifest.generation
+        and metadata.signer_id == manifest.signer_id
+    )
+
+    if not metadata_consistent:
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache descriptive metadata is inconsistent "
+            "with the cached policy or manifest."
+        )
+
+    bundle_digest = _sha256_bytes(policy_bytes + b"\x00" + manifest_bytes)
+
+    return IntelligenceVerifiedCacheEntry(
+        path=str(directory),
+        policy_id=(policy.policy_id),
+        policy_sha256=digest,
+        generation=(manifest.generation),
+        manifest_version=(manifest.manifest_version),
+        signer_id=(manifest.signer_id),
+        bundle_sha256=(bundle_digest),
+        verification_metadata_present=True,
+        verification_metadata_consistent=True,
+    )
+
+
+def discover_verified_cache(
+    verified_root: Path | str,
+    *,
+    policy_id: str | None = None,
+) -> list[IntelligenceVerifiedCacheEntry]:
+    """
+    Discover structurally valid cache entries.
+
+    Discovery proves cache consistency only. It does not establish
+    signer trust or lifecycle acceptance.
+    """
+
+    root = Path(verified_root)
+
+    if not root.exists():
+        return []
+
+    if not root.is_dir():
+        raise IntelligenceVerifiedCacheError(f"Verified cache root is not a directory: {root}.")
+
+    entries: list[IntelligenceVerifiedCacheEntry] = []
+
+    for directory in sorted(
+        (item for item in root.iterdir() if (item.is_dir() and not item.name.startswith("."))),
+        key=lambda item: item.name,
+    ):
+        entry = inspect_verified_cache_entry(directory)
+
+        if policy_id is not None and entry.policy_id != policy_id:
+            continue
+
+        entries.append(entry)
+
+    # Same policy generation may have duplicate directory copies only
+    # when their actual policy+manifest bytes are equivalent.
+    grouped: dict[
+        tuple[str, int],
+        set[str],
+    ] = {}
+
+    for entry in entries:
+        key = (
+            entry.policy_id,
+            entry.generation,
+        )
+
+        grouped.setdefault(
+            key,
+            set(),
+        ).add(entry.bundle_sha256)
+
+    for (
+        cached_policy_id,
+        generation,
+    ), bundle_digests in grouped.items():
+        if len(bundle_digests) > 1:
+            raise IntelligenceVerifiedCacheError(
+                "Conflicting verified-cache entries exist for "
+                f"policy {cached_policy_id!r} generation {generation}."
+            )
+
+    return sorted(
+        entries,
+        key=lambda entry: (
+            entry.policy_id,
+            -entry.generation,
+            entry.policy_sha256,
+            entry.bundle_sha256,
+            entry.path,
+        ),
+    )
+
+
+def select_verified_cache_candidate(
+    verified_root: Path | str,
+    *,
+    policy_id: str | None = None,
+) -> IntelligenceVerifiedCacheEntry:
+    """
+    Deterministically select the highest cached generation.
+
+    If multiple policy IDs exist, the caller must select one explicitly.
+    """
+
+    entries = discover_verified_cache(
+        verified_root,
+        policy_id=policy_id,
+    )
+
+    if not entries:
+        if policy_id is None:
+            raise IntelligenceVerifiedCacheError(
+                "No valid verified-cache intelligence entries were found."
+            )
+
+        raise IntelligenceVerifiedCacheError(
+            f"No valid verified-cache intelligence entry was found for policy {policy_id!r}."
+        )
+
+    policy_ids = {entry.policy_id for entry in entries}
+
+    if policy_id is None and len(policy_ids) != 1:
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache contains multiple policy IDs. Select --policy-id explicitly."
+        )
+
+    # Conflict detection already ensures same-generation entries are
+    # equivalent. Path order makes duplicate-equivalent selection stable.
+    return min(
+        entries,
+        key=lambda entry: (
+            -entry.generation,
+            entry.policy_sha256,
+            entry.bundle_sha256,
+            entry.path,
+        ),
+    )
+
+
+def activate_cached_intelligence(
+    *,
+    cache_directory: Path | str,
+    trust_store_path: Path | str,
+    lifecycle_state_path: Path | str,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> VerifiedIntelligenceSelection:
+    """
+    Activate a cache entry through the existing authoritative boundary.
+
+    Cached verification metadata is never used as trust authority.
+    """
+
+    directory = Path(cache_directory)
+
+    # Reject structural corruption before entering activation.
+    inspect_verified_cache_entry(directory)
+
+    return activate_verified_intelligence(
+        policy_path=(directory / VERIFIED_POLICY_FILENAME),
+        manifest_path=(directory / VERIFIED_MANIFEST_FILENAME),
+        trust_store_path=(trust_store_path),
+        lifecycle_state_path=(lifecycle_state_path),
+        minimum_generation=(minimum_generation),
+        maximum_age_days=(maximum_age_days),
+        maximum_future_skew_seconds=(maximum_future_skew_seconds),
+        now=now,
+    )
+
+
+def select_and_activate_cached_intelligence(
+    *,
+    verified_root: Path | str,
+    trust_store_path: Path | str,
+    lifecycle_state_path: Path | str,
+    policy_id: str | None = None,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> tuple[
+    IntelligenceVerifiedCacheEntry,
+    VerifiedIntelligenceSelection,
+]:
+    entry = select_verified_cache_candidate(
+        verified_root,
+        policy_id=policy_id,
+    )
+
+    selection = activate_cached_intelligence(
+        cache_directory=(entry.path),
+        trust_store_path=(trust_store_path),
+        lifecycle_state_path=(lifecycle_state_path),
+        minimum_generation=(minimum_generation),
+        maximum_age_days=(maximum_age_days),
+        maximum_future_skew_seconds=(maximum_future_skew_seconds),
+        now=now,
+    )
+
+    return (
+        entry,
+        selection,
+    )

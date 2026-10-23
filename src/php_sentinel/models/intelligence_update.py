@@ -73,3 +73,36 @@ class IntelligenceUpdateVerificationMetadata(BaseModel):
     staged_manifest_transport_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
     )
+
+
+class IntelligenceVerifiedCacheEntry(BaseModel):
+    """
+    Descriptive inspection result for one cached intelligence bundle.
+
+    This model is not a trust capability.
+    """
+
+    path: str
+
+    policy_id: str
+
+    policy_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    generation: int = Field(
+        ge=1,
+    )
+
+    manifest_version: int = Field(
+        ge=1,
+    )
+
+    signer_id: str
+
+    bundle_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    verification_metadata_present: bool
+    verification_metadata_consistent: bool

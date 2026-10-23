@@ -9,7 +9,10 @@ from rich.console import Console
 
 from php_sentinel.intelligence.update import (
     IntelligenceUpdateError,
+    discover_verified_cache,
     promote_verified_candidate,
+    select_and_activate_cached_intelligence,
+    select_verified_cache_candidate,
     stage_remote_bundle,
     verify_staged_bundle,
 )
@@ -195,6 +198,145 @@ def promote(
         "Activation has NOT occurred. "
         "Use the existing verified activation boundary "
         "with the cached policy and manifest."
+    )
+
+
+@app.command("cache-list")
+def cache_list(
+    verified_root: Annotated[
+        Path,
+        typer.Option(
+            "--verified-root",
+        ),
+    ],
+    policy_id: Annotated[
+        str | None,
+        typer.Option(
+            "--policy-id",
+        ),
+    ] = None,
+) -> None:
+    try:
+        entries = discover_verified_cache(
+            verified_root,
+            policy_id=policy_id,
+        )
+
+    except IntelligenceUpdateError as exc:
+        console.print(f"[bold red]Cache inspection failed:[/bold red] {exc}")
+
+        raise typer.Exit(code=5) from exc
+
+    typer.echo(
+        json.dumps(
+            [entry.model_dump(mode="json") for entry in entries],
+            indent=2,
+        )
+    )
+
+
+@app.command("cache-select")
+def cache_select(
+    verified_root: Annotated[
+        Path,
+        typer.Option(
+            "--verified-root",
+        ),
+    ],
+    policy_id: Annotated[
+        str | None,
+        typer.Option(
+            "--policy-id",
+        ),
+    ] = None,
+) -> None:
+    try:
+        entry = select_verified_cache_candidate(
+            verified_root,
+            policy_id=policy_id,
+        )
+
+    except IntelligenceUpdateError as exc:
+        console.print(f"[bold red]Cache selection failed:[/bold red] {exc}")
+
+        raise typer.Exit(code=5) from exc
+
+    typer.echo(
+        json.dumps(
+            entry.model_dump(mode="json"),
+            indent=2,
+        )
+    )
+
+
+@app.command("cache-activate")
+def cache_activate(
+    verified_root: Annotated[
+        Path,
+        typer.Option(
+            "--verified-root",
+        ),
+    ],
+    trust_store: Annotated[
+        Path,
+        typer.Option(
+            "--trust-store",
+            help=("LOCAL operator-controlled trusted signer store."),
+        ),
+    ],
+    lifecycle_state: Annotated[
+        Path,
+        typer.Option(
+            "--lifecycle-state",
+        ),
+    ],
+    policy_id: Annotated[
+        str | None,
+        typer.Option(
+            "--policy-id",
+        ),
+    ] = None,
+    minimum_generation: Annotated[
+        int,
+        typer.Option(
+            "--minimum-generation",
+        ),
+    ] = 1,
+    maximum_age_days: Annotated[
+        int,
+        typer.Option(
+            "--max-age-days",
+        ),
+    ] = 30,
+) -> None:
+    try:
+        entry, selection = select_and_activate_cached_intelligence(
+            verified_root=(verified_root),
+            trust_store_path=(trust_store),
+            lifecycle_state_path=(lifecycle_state),
+            policy_id=(policy_id),
+            minimum_generation=(minimum_generation),
+            maximum_age_days=(maximum_age_days),
+        )
+
+    except (
+        IntelligenceUpdateError,
+        OSError,
+        ValueError,
+    ) as exc:
+        console.print(f"[bold red]Cache activation failed:[/bold red] {exc}")
+
+        raise typer.Exit(code=6) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                "cache_entry": (entry.model_dump(mode="json")),
+                "trust": (selection.trust.model_dump(mode="json")),
+                "lifecycle": (selection.lifecycle.model_dump(mode="json")),
+            },
+            indent=2,
+        )
     )
 
 
