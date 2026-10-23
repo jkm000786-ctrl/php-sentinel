@@ -11,6 +11,10 @@ from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.pipeline import run_unified_assessment
 from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.http.client import fetch
+from php_sentinel.intelligence.activation import (
+    IntelligenceActivationError,
+    activate_intelligence,
+)
 from php_sentinel.models.vendor import (
     BackportStatus,
     VendorEvidence,
@@ -313,7 +317,41 @@ def scan(
             help="Write human-readable Markdown report.",
         ),
     ] = None,
+    policy_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--policy",
+            help=("External intelligence policy JSON. Requires --manifest and --trust-store."),
+        ),
+    ] = None,
+    manifest_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--manifest",
+            help=("Detached signed intelligence manifest. Requires --policy and --trust-store."),
+        ),
+    ] = None,
+    trust_store_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--trust-store",
+            help=("Trusted signer store for external intelligence activation."),
+        ),
+    ] = None,
 ) -> None:
+    try:
+        (
+            selected_policy,
+            intelligence_trust,
+        ) = activate_intelligence(
+            policy_path=policy_path,
+            manifest_path=manifest_path,
+            trust_store_path=trust_store_path,
+        )
+    except IntelligenceActivationError as exc:
+        console.print(f"[red]Intelligence activation denied:[/red] {exc}")
+        raise typer.Exit(code=4) from exc
+
     validation = None
 
     if validate_lab:
@@ -351,6 +389,8 @@ def scan(
             backport_status=backport_status,
             advisory_reference=advisory_reference,
             lab_validation=validation,
+            intelligence_policy=selected_policy,
+            intelligence_trust=intelligence_trust,
         )
     except httpx.HTTPError as exc:
         console.print(f"[red]HTTP error:[/red] {exc}")
@@ -440,6 +480,18 @@ def scan(
     summary.add_row(
         "Body SHA-256",
         report.http.body_sha256,
+    )
+    summary.add_row(
+        "Intelligence policy",
+        (report.provenance.intelligence_policy_id or "legacy/unknown"),
+    )
+    summary.add_row(
+        "Intelligence trust",
+        (report.provenance.intelligence_trust_state or "legacy/unknown"),
+    )
+    summary.add_row(
+        "Intelligence signer",
+        (report.provenance.intelligence_signer_id or "none"),
     )
 
     console.print(summary)
