@@ -9,17 +9,17 @@ from rich.console import Console
 
 from php_sentinel.intelligence.registry_trust import (
     SourceRegistryVerificationError,
+    activate_cached_intelligence_with_signed_registry,
     activate_signed_source_registry,
+    stage_bundle_with_signed_registry,
     verify_signed_source_registry,
+    verify_staged_bundle_with_signed_registry,
 )
 from php_sentinel.intelligence.source_registry import (
     IntelligenceSourceRegistryError,
-    activate_registry_cached_intelligence,
     load_source_registry,
     promote_registry_candidate,
     resolve_source_selection,
-    stage_registry_bundle,
-    verify_registry_staged_bundle,
 )
 from php_sentinel.intelligence.update import (
     IntelligenceUpdateError,
@@ -426,45 +426,81 @@ def source_resolve(
 def source_stage(
     registry: Annotated[
         Path,
+        typer.Option("--registry"),
+    ],
+    registry_manifest: Annotated[
+        Path,
+        typer.Option("--registry-manifest"),
+    ],
+    registry_trust_store: Annotated[
+        Path,
         typer.Option(
-            "--registry",
+            "--registry-trust-store",
+            help=("LOCAL trust store for authenticating the source registry."),
         ),
+    ],
+    registry_state: Annotated[
+        Path,
+        typer.Option("--registry-state"),
     ],
     source_id: Annotated[
         str,
-        typer.Option(
-            "--source-id",
-        ),
+        typer.Option("--source-id"),
     ],
     channel: Annotated[
         str,
-        typer.Option(
-            "--channel",
-        ),
+        typer.Option("--channel"),
     ],
     staging_directory: Annotated[
         Path,
-        typer.Option(
-            "--staging-dir",
-        ),
+        typer.Option("--staging-dir"),
     ],
+    registry_minimum_generation: Annotated[
+        int,
+        typer.Option("--registry-minimum-generation"),
+    ] = 1,
+    registry_maximum_age_days: Annotated[
+        int,
+        typer.Option("--registry-max-age-days"),
+    ] = 30,
 ) -> None:
+    """
+    Stage remote intelligence using an authenticated source registry.
+
+    Registry verification is read-only. Successful transport does not
+    establish intelligence trust and does not advance registry state.
+    """
+
     try:
-        metadata = stage_registry_bundle(
+        verified_registry, metadata = stage_bundle_with_signed_registry(
             registry_path=registry,
+            registry_manifest_path=(registry_manifest),
+            registry_trust_store_path=(registry_trust_store),
+            registry_state_path=(registry_state),
             source_id=source_id,
             channel=channel,
             staging_directory=(staging_directory),
+            registry_minimum_generation=(registry_minimum_generation),
+            registry_maximum_age_days=(registry_maximum_age_days),
         )
 
-    except IntelligenceUpdateError as exc:
-        console.print(f"[bold red]Source staging failed:[/bold red] {exc}")
+    except (
+        IntelligenceUpdateError,
+        SourceRegistryVerificationError,
+        OSError,
+        ValueError,
+    ) as exc:
+        console.print(f"[bold red]Authenticated source staging failed:[/bold red] {exc}")
 
         raise typer.Exit(code=7) from exc
 
     typer.echo(
         json.dumps(
-            metadata.model_dump(mode="json"),
+            {
+                "registry_trust": (verified_registry.trust.state.value),
+                "registry_lifecycle": (verified_registry.lifecycle.state.value),
+                "stage": metadata.model_dump(mode="json"),
+            },
             indent=2,
         )
     )
@@ -474,69 +510,86 @@ def source_stage(
 def source_promote(
     registry: Annotated[
         Path,
-        typer.Option(
-            "--registry",
-        ),
+        typer.Option("--registry"),
+    ],
+    registry_manifest: Annotated[
+        Path,
+        typer.Option("--registry-manifest"),
+    ],
+    registry_trust_store: Annotated[
+        Path,
+        typer.Option("--registry-trust-store"),
+    ],
+    registry_state: Annotated[
+        Path,
+        typer.Option("--registry-state"),
     ],
     source_id: Annotated[
         str,
-        typer.Option(
-            "--source-id",
-        ),
+        typer.Option("--source-id"),
     ],
     channel: Annotated[
         str,
-        typer.Option(
-            "--channel",
-        ),
+        typer.Option("--channel"),
     ],
     staging_directory: Annotated[
         Path,
-        typer.Option(
-            "--staging-dir",
-        ),
+        typer.Option("--staging-dir"),
     ],
     trust_store: Annotated[
         Path,
         typer.Option(
             "--trust-store",
+            help=("LOCAL intelligence signer trust store."),
         ),
     ],
     lifecycle_state: Annotated[
         Path,
-        typer.Option(
-            "--lifecycle-state",
-        ),
+        typer.Option("--lifecycle-state"),
     ],
     verified_root: Annotated[
         Path,
-        typer.Option(
-            "--verified-root",
-        ),
+        typer.Option("--verified-root"),
     ],
     minimum_generation: Annotated[
         int,
-        typer.Option(
-            "--minimum-generation",
-        ),
+        typer.Option("--minimum-generation"),
     ] = 1,
     maximum_age_days: Annotated[
         int,
-        typer.Option(
-            "--max-age-days",
-        ),
+        typer.Option("--max-age-days"),
+    ] = 30,
+    registry_minimum_generation: Annotated[
+        int,
+        typer.Option("--registry-minimum-generation"),
+    ] = 1,
+    registry_maximum_age_days: Annotated[
+        int,
+        typer.Option("--registry-max-age-days"),
     ] = 30,
 ) -> None:
+    """
+    Verify and cache staged intelligence under authenticated registry policy.
+
+    Registry trust and intelligence trust are evaluated independently.
+    Neither lifecycle state is advanced by verification/promotion alone.
+    """
+
     try:
-        candidate = verify_registry_staged_bundle(
+        verified_registry, candidate = verify_staged_bundle_with_signed_registry(
             registry_path=registry,
+            registry_manifest_path=(registry_manifest),
+            registry_trust_store_path=(registry_trust_store),
+            registry_state_path=(registry_state),
             source_id=source_id,
             channel=channel,
             staging_directory=(staging_directory),
-            trust_store_path=(trust_store),
-            lifecycle_state_path=(lifecycle_state),
-            minimum_generation=(minimum_generation),
-            maximum_age_days=(maximum_age_days),
+            intelligence_trust_store_path=(trust_store),
+            intelligence_lifecycle_state_path=(lifecycle_state),
+            registry_minimum_generation=(registry_minimum_generation),
+            registry_maximum_age_days=(registry_maximum_age_days),
+            intelligence_minimum_generation=(minimum_generation),
+            intelligence_maximum_age_days=(maximum_age_days),
         )
 
         destination = promote_registry_candidate(
@@ -546,13 +599,19 @@ def source_promote(
             expected_channel=channel,
         )
 
-    except IntelligenceUpdateError as exc:
-        console.print(f"[bold red]Source promotion failed:[/bold red] {exc}")
+    except (
+        IntelligenceUpdateError,
+        SourceRegistryVerificationError,
+        OSError,
+        ValueError,
+    ) as exc:
+        console.print(f"[bold red]Authenticated source promotion failed:[/bold red] {exc}")
 
         raise typer.Exit(code=8) from exc
 
-    console.print("[bold green]Registry-constrained bundle cached.[/bold green]")
+    console.print("[bold green]Authenticated registry-constrained bundle cached.[/bold green]")
     console.print(f"Path: {destination}")
+    console.print(f"Registry trust: {verified_registry.trust.state.value}")
     console.print("Activation has NOT occurred.")
 
 
@@ -560,87 +619,117 @@ def source_promote(
 def source_activate(
     registry: Annotated[
         Path,
-        typer.Option(
-            "--registry",
-        ),
+        typer.Option("--registry"),
+    ],
+    registry_manifest: Annotated[
+        Path,
+        typer.Option("--registry-manifest"),
+    ],
+    registry_trust_store: Annotated[
+        Path,
+        typer.Option("--registry-trust-store"),
+    ],
+    registry_state: Annotated[
+        Path,
+        typer.Option("--registry-state"),
     ],
     source_id: Annotated[
         str,
-        typer.Option(
-            "--source-id",
-        ),
+        typer.Option("--source-id"),
     ],
     channel: Annotated[
         str,
-        typer.Option(
-            "--channel",
-        ),
+        typer.Option("--channel"),
     ],
     verified_root: Annotated[
         Path,
-        typer.Option(
-            "--verified-root",
-        ),
+        typer.Option("--verified-root"),
     ],
     trust_store: Annotated[
         Path,
         typer.Option(
             "--trust-store",
+            help=("LOCAL intelligence signer trust store."),
         ),
     ],
     lifecycle_state: Annotated[
         Path,
-        typer.Option(
-            "--lifecycle-state",
-        ),
+        typer.Option("--lifecycle-state"),
     ],
     policy_id: Annotated[
         str | None,
-        typer.Option(
-            "--policy-id",
-        ),
+        typer.Option("--policy-id"),
     ] = None,
     minimum_generation: Annotated[
         int,
-        typer.Option(
-            "--minimum-generation",
-        ),
+        typer.Option("--minimum-generation"),
     ] = 1,
     maximum_age_days: Annotated[
         int,
-        typer.Option(
-            "--max-age-days",
-        ),
+        typer.Option("--max-age-days"),
+    ] = 30,
+    registry_minimum_generation: Annotated[
+        int,
+        typer.Option("--registry-minimum-generation"),
+    ] = 1,
+    registry_maximum_age_days: Annotated[
+        int,
+        typer.Option("--registry-max-age-days"),
     ] = 30,
 ) -> None:
+    """
+    Activate cached intelligence under authenticated registry authority.
+
+    This is the authoritative CLI path for registry-constrained activation.
+    Registry and intelligence lifecycle state are committed only through
+    their existing authoritative activation boundaries.
+    """
+
     try:
-        entry, selection = activate_registry_cached_intelligence(
+        (
+            verified_registry,
+            entry,
+            selection,
+        ) = activate_cached_intelligence_with_signed_registry(
             registry_path=registry,
+            registry_manifest_path=(registry_manifest),
+            registry_trust_store_path=(registry_trust_store),
+            registry_state_path=(registry_state),
             source_id=source_id,
             channel=channel,
-            verified_root=(verified_root),
-            trust_store_path=(trust_store),
-            lifecycle_state_path=(lifecycle_state),
+            verified_root=verified_root,
+            intelligence_trust_store_path=(trust_store),
+            intelligence_lifecycle_state_path=(lifecycle_state),
             policy_id=policy_id,
-            minimum_generation=(minimum_generation),
-            maximum_age_days=(maximum_age_days),
+            registry_minimum_generation=(registry_minimum_generation),
+            registry_maximum_age_days=(registry_maximum_age_days),
+            intelligence_minimum_generation=(minimum_generation),
+            intelligence_maximum_age_days=(maximum_age_days),
         )
 
     except (
         IntelligenceUpdateError,
+        SourceRegistryVerificationError,
         OSError,
         ValueError,
     ) as exc:
-        console.print(f"[bold red]Source activation failed:[/bold red] {exc}")
+        console.print(f"[bold red]Authenticated source activation failed:[/bold red] {exc}")
 
         raise typer.Exit(code=9) from exc
 
     typer.echo(
         json.dumps(
             {
-                "cache_entry": (entry.model_dump(mode="json")),
-                "trust": (selection.trust.model_dump(mode="json")),
-                "lifecycle": (selection.lifecycle.model_dump(mode="json")),
+                "registry": {
+                    "trust": (verified_registry.trust.state.value),
+                    "lifecycle": (verified_registry.lifecycle.state.value),
+                    "generation": (verified_registry.lifecycle.generation),
+                },
+                "cache_entry": entry.model_dump(mode="json"),
+                "intelligence": {
+                    "trust": selection.trust.model_dump(mode="json"),
+                    "lifecycle": (selection.lifecycle.model_dump(mode="json")),
+                },
             },
             indent=2,
         )

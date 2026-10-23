@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -95,6 +95,76 @@ def _resolve_channel(
     return selected
 
 
+def _effective_url_port(
+    *,
+    scheme: str,
+    port: int | None,
+) -> int | None:
+    if port is not None:
+        return port
+
+    if scheme == "https":
+        return 443
+
+    if scheme == "http":
+        return 80
+
+    return None
+
+
+def _url_is_within_source_base(
+    *,
+    base_url: str,
+    candidate_url: str,
+) -> bool:
+    """
+    Return True only when candidate_url remains structurally contained
+    within base_url.
+
+    Containment requires exact scheme, normalized hostname, effective
+    port, and a path beneath the configured base path. Credentials,
+    query strings, and fragments are rejected.
+    """
+
+    base = urlsplit(base_url)
+    candidate = urlsplit(candidate_url)
+
+    if base.scheme.lower() != candidate.scheme.lower():
+        return False
+
+    if (base.hostname or "").lower() != (candidate.hostname or "").lower():
+        return False
+
+    if _effective_url_port(
+        scheme=base.scheme.lower(),
+        port=base.port,
+    ) != _effective_url_port(
+        scheme=candidate.scheme.lower(),
+        port=candidate.port,
+    ):
+        return False
+
+    if (
+        base.username is not None
+        or base.password is not None
+        or candidate.username is not None
+        or candidate.password is not None
+    ):
+        return False
+
+    if base.query or base.fragment or candidate.query or candidate.fragment:
+        return False
+
+    base_path = base.path or "/"
+
+    if not base_path.endswith("/"):
+        base_path += "/"
+
+    candidate_path = candidate.path or "/"
+
+    return candidate_path.startswith(base_path)
+
+
 def resolve_source_selection(
     *,
     registry: IntelligenceSourceRegistry,
@@ -123,7 +193,13 @@ def resolve_source_selection(
 
     base = source.base_url
 
-    if not policy_url.startswith(base) or not manifest_url.startswith(base):
+    if not _url_is_within_source_base(
+        base_url=base,
+        candidate_url=policy_url,
+    ) or not _url_is_within_source_base(
+        base_url=base,
+        candidate_url=manifest_url,
+    ):
         raise IntelligenceSourceRegistryError(
             "Resolved source-channel URL escaped its configured base URL."
         )
@@ -138,18 +214,26 @@ def resolve_source_selection(
     )
 
 
-def stage_registry_bundle(
+def stage_registry_bundle_from_registry(
     *,
-    registry_path: Path | str,
+    registry: IntelligenceSourceRegistry,
     source_id: str,
     channel: str,
     staging_directory: Path | str,
     timeout_seconds: float = 15.0,
     maximum_bytes: int = 2 * 1024 * 1024,
     client: httpx.Client | None = None,
+    resolver=None,
+    peer_address_getter=None,
     now: datetime | None = None,
 ) -> IntelligenceUpdateStageMetadata:
-    registry = load_source_registry(registry_path)
+    """
+    Stage a remote intelligence bundle from an already loaded registry.
+
+    This function assigns no authenticity to ``registry`` by itself.
+    Callers that require publisher-authenticated source policy must pass
+    the registry object obtained from ``VerifiedSourceRegistry``.
+    """
 
     selection = resolve_source_selection(
         registry=registry,
@@ -164,6 +248,8 @@ def stage_registry_bundle(
         timeout_seconds=(timeout_seconds),
         maximum_bytes=(maximum_bytes),
         client=client,
+        **({} if resolver is None else {"resolver": resolver}),
+        **({} if peer_address_getter is None else {"peer_address_getter": (peer_address_getter)}),
         now=now,
     )
 
@@ -180,6 +266,43 @@ def stage_registry_bundle(
     )
 
     return metadata
+
+
+def stage_registry_bundle(
+    *,
+    registry_path: Path | str,
+    source_id: str,
+    channel: str,
+    staging_directory: Path | str,
+    timeout_seconds: float = 15.0,
+    maximum_bytes: int = 2 * 1024 * 1024,
+    client: httpx.Client | None = None,
+    resolver=None,
+    peer_address_getter=None,
+    now: datetime | None = None,
+) -> IntelligenceUpdateStageMetadata:
+    """
+    Stage using an explicitly operator-local raw registry file.
+
+    The registry loaded here is configuration, not publisher-authenticated
+    registry authority. Remote authenticated workflows should use the
+    signed-registry boundary instead.
+    """
+
+    registry = load_source_registry(registry_path)
+
+    return stage_registry_bundle_from_registry(
+        registry=registry,
+        source_id=source_id,
+        channel=channel,
+        staging_directory=staging_directory,
+        timeout_seconds=timeout_seconds,
+        maximum_bytes=maximum_bytes,
+        client=client,
+        resolver=resolver,
+        peer_address_getter=(peer_address_getter),
+        now=now,
+    )
 
 
 def _validate_staged_source_identity(
@@ -202,9 +325,9 @@ def _validate_staged_source_identity(
         )
 
 
-def verify_registry_staged_bundle(
+def verify_registry_staged_bundle_from_registry(
     *,
-    registry_path: Path | str,
+    registry: IntelligenceSourceRegistry,
     source_id: str,
     channel: str,
     staging_directory: Path | str,
@@ -215,7 +338,13 @@ def verify_registry_staged_bundle(
     maximum_future_skew_seconds: int = 300,
     now: datetime | None = None,
 ) -> VerifiedUpdateCandidate:
-    registry = load_source_registry(registry_path)
+    """
+    Verify staged intelligence against an already loaded registry.
+
+    Registry authenticity is a property of the caller's capability, not
+    of this model object. Signed workflows must supply the registry from
+    ``VerifiedSourceRegistry``.
+    """
 
     selection = resolve_source_selection(
         registry=registry,
@@ -251,6 +380,42 @@ def verify_registry_staged_bundle(
         )
 
     return candidate
+
+
+def verify_registry_staged_bundle(
+    *,
+    registry_path: Path | str,
+    source_id: str,
+    channel: str,
+    staging_directory: Path | str,
+    trust_store_path: Path | str,
+    lifecycle_state_path: Path | str,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> VerifiedUpdateCandidate:
+    """
+    Verify using an explicitly operator-local raw registry file.
+
+    This path intentionally preserves Phase 20 local configuration
+    semantics. It does not claim registry publisher authenticity.
+    """
+
+    registry = load_source_registry(registry_path)
+
+    return verify_registry_staged_bundle_from_registry(
+        registry=registry,
+        source_id=source_id,
+        channel=channel,
+        staging_directory=staging_directory,
+        trust_store_path=trust_store_path,
+        lifecycle_state_path=lifecycle_state_path,
+        minimum_generation=minimum_generation,
+        maximum_age_days=maximum_age_days,
+        maximum_future_skew_seconds=(maximum_future_skew_seconds),
+        now=now,
+    )
 
 
 def promote_registry_candidate(
@@ -332,9 +497,9 @@ def select_registry_cache_candidate(
     return selected
 
 
-def activate_registry_cached_intelligence(
+def activate_registry_cached_intelligence_from_registry(
     *,
-    registry_path: Path | str,
+    registry: IntelligenceSourceRegistry,
     source_id: str,
     channel: str,
     verified_root: Path | str,
@@ -349,8 +514,6 @@ def activate_registry_cached_intelligence(
     IntelligenceVerifiedCacheEntry,
     VerifiedIntelligenceSelection,
 ]:
-    registry = load_source_registry(registry_path)
-
     selection = resolve_source_selection(
         registry=registry,
         source_id=source_id,
@@ -392,4 +555,45 @@ def activate_registry_cached_intelligence(
     return (
         entry,
         activated,
+    )
+
+
+def activate_registry_cached_intelligence(
+    *,
+    registry_path: Path | str,
+    source_id: str,
+    channel: str,
+    verified_root: Path | str,
+    trust_store_path: Path | str,
+    lifecycle_state_path: Path | str,
+    policy_id: str | None = None,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> tuple[
+    IntelligenceVerifiedCacheEntry,
+    VerifiedIntelligenceSelection,
+]:
+    """
+    Activate using an explicitly operator-local raw registry file.
+
+    Signed-registry workflows should use the authenticated boundary in
+    ``registry_trust`` instead.
+    """
+
+    registry = load_source_registry(registry_path)
+
+    return activate_registry_cached_intelligence_from_registry(
+        registry=registry,
+        source_id=source_id,
+        channel=channel,
+        verified_root=verified_root,
+        trust_store_path=trust_store_path,
+        lifecycle_state_path=lifecycle_state_path,
+        policy_id=policy_id,
+        minimum_generation=minimum_generation,
+        maximum_age_days=maximum_age_days,
+        maximum_future_skew_seconds=(maximum_future_skew_seconds),
+        now=now,
     )

@@ -1,5 +1,6 @@
 import base64
 import json
+import socket
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -14,6 +15,7 @@ from php_sentinel.intelligence.repository import (
 )
 from php_sentinel.intelligence.source_registry import (
     IntelligenceSourceRegistryError,
+    _url_is_within_source_base,
     activate_registry_cached_intelligence,
     load_source_registry,
     promote_registry_candidate,
@@ -42,6 +44,32 @@ NOW = datetime(
     0,
     tzinfo=UTC,
 )
+
+
+def public_test_peer_address(
+    response,
+):
+    return "8.8.8.8"
+
+
+def public_test_resolver(
+    host,
+    port,
+    *,
+    type,
+):
+    return [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            6,
+            "",
+            (
+                "8.8.8.8",
+                port,
+            ),
+        )
+    ]
 
 
 def key_material():
@@ -233,6 +261,8 @@ def setup_source_bundle(
             channel="stable",
             staging_directory=stage,
             client=client,
+            resolver=public_test_resolver,
+            peer_address_getter=public_test_peer_address,
             now=NOW,
         )
 
@@ -504,3 +534,64 @@ def test_registry_cache_activation_reverifies_current_authority(
     assert entry.channel == "stable"
     assert selection.trust.trusted is True
     assert selection.lifecycle.activatable is True
+
+
+def test_url_containment_accepts_same_https_origin_and_subpath():
+    assert _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test/intel/stable/policy.json"),
+    )
+
+
+def test_url_containment_rejects_prefix_confusion_host():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test.evil/intel/stable/policy.json"),
+    )
+
+
+def test_url_containment_rejects_different_port():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test:8443/intel/stable/policy.json"),
+    )
+
+
+def test_url_containment_treats_explicit_443_as_https_default():
+    assert _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test:443/intel/stable/policy.json"),
+    )
+
+
+def test_url_containment_rejects_sibling_path_prefix():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test/intelligence/stable/policy.json"),
+    )
+
+
+def test_url_containment_rejects_parent_path():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test/stable/policy.json"),
+    )
+
+
+def test_url_containment_rejects_query_and_fragment():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test/intel/stable/policy.json?mirror=evil"),
+    )
+
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test/intel/stable/policy.json#fragment"),
+    )
+
+
+def test_url_containment_rejects_embedded_credentials():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://user:pass@updates.example.test/intel/stable/policy.json"),
+    )

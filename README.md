@@ -12,6 +12,19 @@ Initial policy covers the PHP security release of 2026-10-21:
 
 PHP Sentinel does not treat a version banner as proof of vulnerability.
 
+
+## Security architecture
+
+PHP Sentinel uses an evidence-driven, fail-closed intelligence trust model.
+Remote intelligence workflows authenticate the signed source registry, enforce
+HTTPS/public-destination transport policy, refuse redirects, verify the actual
+connected peer against the prevalidated DNS set, and still require independent
+manifest signature and lifecycle verification.
+
+See
+[`docs/29-registry-enforced-trusted-update-transport.md`](docs/29-registry-enforced-trusted-update-transport.md)
+for the Phase 24 transport and trust boundaries.
+
 ## WSL setup
 
 ```bash

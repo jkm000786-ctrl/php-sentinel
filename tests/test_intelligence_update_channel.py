@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import socket
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -50,6 +51,32 @@ NOW = datetime(
 POLICY_URL = "https://updates.example.test/policy.json"
 
 MANIFEST_URL = "https://updates.example.test/manifest.json"
+
+
+def public_test_peer_address(
+    response,
+):
+    return "8.8.8.8"
+
+
+def public_test_resolver(
+    host,
+    port,
+    *,
+    type,
+):
+    return [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            6,
+            "",
+            (
+                "8.8.8.8",
+                port,
+            ),
+        )
+    ]
 
 
 def key_material():
@@ -188,6 +215,8 @@ def stage_valid_bundle(
             manifest_url=MANIFEST_URL,
             staging_directory=stage,
             client=client,
+            resolver=public_test_resolver,
+            peer_address_getter=public_test_peer_address,
             now=NOW,
         )
 

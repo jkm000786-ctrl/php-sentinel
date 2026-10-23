@@ -21,14 +21,11 @@ from php_sentinel.intelligence.lifecycle import (
 )
 from php_sentinel.intelligence.source_registry import (
     IntelligenceSourceRegistryError,
-    resolve_source_selection,
-    select_registry_cache_candidate,
+    activate_registry_cached_intelligence_from_registry,
+    stage_registry_bundle_from_registry,
+    verify_registry_staged_bundle_from_registry,
 )
 from php_sentinel.intelligence.trust import load_trust_store
-from php_sentinel.intelligence.update import (
-    IntelligenceVerifiedCacheError,
-    activate_cached_intelligence,
-)
 from php_sentinel.models.intelligence_lifecycle import (
     DelegationHistoryRecord,
 )
@@ -847,6 +844,118 @@ def activate_signed_source_registry(
     return verified
 
 
+def stage_bundle_with_signed_registry(
+    *,
+    registry_path: Path | str,
+    registry_manifest_path: Path | str,
+    registry_trust_store_path: Path | str,
+    registry_state_path: Path | str,
+    source_id: str,
+    channel: str,
+    staging_directory: Path | str,
+    timeout_seconds: float = 15.0,
+    maximum_bytes: int = 2 * 1024 * 1024,
+    client=None,
+    resolver=None,
+    peer_address_getter=None,
+    registry_minimum_generation: int = 1,
+    registry_maximum_age_days: int = 30,
+    registry_maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+):
+    """
+    Stage intelligence only after authenticating the source registry.
+
+    Registry verification is read-only here: staging remote bytes does not
+    advance registry lifecycle state.
+    """
+
+    verified_registry = verify_signed_source_registry(
+        registry_path=registry_path,
+        manifest_path=registry_manifest_path,
+        registry_trust_store_path=(registry_trust_store_path),
+        registry_state_path=registry_state_path,
+        minimum_generation=(registry_minimum_generation),
+        maximum_age_days=(registry_maximum_age_days),
+        maximum_future_skew_seconds=(registry_maximum_future_skew_seconds),
+        now=now,
+    )
+
+    metadata = stage_registry_bundle_from_registry(
+        registry=verified_registry.registry,
+        source_id=source_id,
+        channel=channel,
+        staging_directory=staging_directory,
+        timeout_seconds=timeout_seconds,
+        maximum_bytes=maximum_bytes,
+        client=client,
+        resolver=resolver,
+        peer_address_getter=(peer_address_getter),
+        now=now,
+    )
+
+    return (
+        verified_registry,
+        metadata,
+    )
+
+
+def verify_staged_bundle_with_signed_registry(
+    *,
+    registry_path: Path | str,
+    registry_manifest_path: Path | str,
+    registry_trust_store_path: Path | str,
+    registry_state_path: Path | str,
+    source_id: str,
+    channel: str,
+    staging_directory: Path | str,
+    intelligence_trust_store_path: Path | str,
+    intelligence_lifecycle_state_path: Path | str,
+    registry_minimum_generation: int = 1,
+    registry_maximum_age_days: int = 30,
+    registry_maximum_future_skew_seconds: int = 300,
+    intelligence_minimum_generation: int = 1,
+    intelligence_maximum_age_days: int = 30,
+    intelligence_maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+):
+    """
+    Verify staged intelligence against authenticated source policy.
+
+    Registry trust and intelligence trust remain independent. Verification
+    does not commit either lifecycle state.
+    """
+
+    verified_registry = verify_signed_source_registry(
+        registry_path=registry_path,
+        manifest_path=registry_manifest_path,
+        registry_trust_store_path=(registry_trust_store_path),
+        registry_state_path=registry_state_path,
+        minimum_generation=(registry_minimum_generation),
+        maximum_age_days=(registry_maximum_age_days),
+        maximum_future_skew_seconds=(registry_maximum_future_skew_seconds),
+        now=now,
+    )
+
+    candidate = verify_registry_staged_bundle_from_registry(
+        registry=verified_registry.registry,
+        source_id=source_id,
+        channel=channel,
+        staging_directory=staging_directory,
+        trust_store_path=(intelligence_trust_store_path),
+        lifecycle_state_path=(intelligence_lifecycle_state_path),
+        minimum_generation=(intelligence_minimum_generation),
+        maximum_age_days=(intelligence_maximum_age_days),
+        maximum_future_skew_seconds=(intelligence_maximum_future_skew_seconds),
+        now=now,
+    )
+
+    return (
+        verified_registry,
+        candidate,
+    )
+
+
 def activate_cached_intelligence_with_signed_registry(
     *,
     registry_path: Path | str,
@@ -881,42 +990,18 @@ def activate_cached_intelligence_with_signed_registry(
         now=now,
     )
 
-    selection = resolve_source_selection(
+    entry, activated = activate_registry_cached_intelligence_from_registry(
         registry=verified_registry.registry,
         source_id=source_id,
         channel=channel,
-    )
-
-    entry = select_registry_cache_candidate(
         verified_root=verified_root,
-        source_id=source_id,
-        channel=channel,
-        policy_id=policy_id,
-    )
-
-    if entry.signer_id not in selection.allowed_signer_ids:
-        raise IntelligenceVerifiedCacheError(
-            "Cached intelligence signer is not authorized by the verified source registry."
-        )
-
-    effective_minimum = max(
-        intelligence_minimum_generation,
-        selection.minimum_generation,
-    )
-
-    activated = activate_cached_intelligence(
-        cache_directory=entry.path,
         trust_store_path=(intelligence_trust_store_path),
         lifecycle_state_path=(intelligence_lifecycle_state_path),
-        minimum_generation=(effective_minimum),
+        policy_id=policy_id,
+        minimum_generation=(intelligence_minimum_generation),
         maximum_age_days=(intelligence_maximum_age_days),
         now=now,
     )
-
-    if activated.trust.signer_id not in selection.allowed_signer_ids:
-        raise IntelligenceVerifiedCacheError(
-            "Activated intelligence signer is not authorized by the verified source registry."
-        )
 
     return (
         verified_registry,

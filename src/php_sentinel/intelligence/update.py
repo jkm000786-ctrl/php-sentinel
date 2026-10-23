@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import shutil
+import socket
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -139,6 +141,144 @@ def _sha256_bytes(
     return hashlib.sha256(payload).hexdigest()
 
 
+def _address_is_public_update_destination(
+    address: str,
+) -> bool:
+    """
+    Return True only for globally routable unicast IP addresses.
+
+    PHP Sentinel update transport rejects loopback, private, link-local,
+    multicast, unspecified, reserved, and other non-global destinations.
+    """
+
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError as exc:
+        raise IntelligenceUpdateTransportError(f"Invalid resolved IP address {address!r}.") from exc
+
+    return (
+        parsed.is_global
+        and not parsed.is_multicast
+        and not parsed.is_unspecified
+        and not parsed.is_loopback
+        and not parsed.is_link_local
+        and not parsed.is_private
+        and not parsed.is_reserved
+    )
+
+
+def _resolve_remote_host_addresses(
+    *,
+    hostname: str,
+    port: int,
+    resolver=socket.getaddrinfo,
+) -> tuple[str, ...]:
+    """
+    Resolve a hostname into normalized unique IP addresses.
+
+    Resolution itself establishes no transport trust. This helper exists
+    to support preflight destination containment.
+    """
+
+    try:
+        results = resolver(
+            hostname,
+            port,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise IntelligenceUpdateTransportError(
+            f"Intelligence update hostname resolution failed for {hostname!r}: {exc}"
+        ) from exc
+
+    addresses: set[str] = set()
+
+    for result in results:
+        try:
+            sockaddr = result[4]
+            raw_address = sockaddr[0]
+        except (
+            IndexError,
+            TypeError,
+        ) as exc:
+            raise IntelligenceUpdateTransportError(
+                "Intelligence update resolver returned malformed address data."
+            ) from exc
+
+        try:
+            normalized = str(ipaddress.ip_address(raw_address))
+        except ValueError as exc:
+            raise IntelligenceUpdateTransportError(
+                f"Resolver returned invalid IP address {raw_address!r}."
+            ) from exc
+
+        addresses.add(normalized)
+
+    if not addresses:
+        raise IntelligenceUpdateTransportError(
+            f"Intelligence update hostname {hostname!r} resolved to no addresses."
+        )
+
+    return tuple(sorted(addresses))
+
+
+def _validate_remote_destination(
+    value: str,
+    *,
+    resolver=socket.getaddrinfo,
+) -> tuple[str, ...]:
+    """
+    Apply preflight SSRF destination policy to an update URL.
+
+    Every resolved address must be globally routable. Mixed public/private
+    DNS answers fail closed.
+
+    This is preflight containment only. It does not by itself prove that
+    the eventual TCP connection used the exact validated address set.
+    """
+
+    parsed = urlsplit(value)
+
+    hostname = parsed.hostname
+
+    if not hostname:
+        raise IntelligenceUpdateTransportError("Intelligence update URL must include a hostname.")
+
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal = None
+
+    if literal is not None:
+        address = str(literal)
+
+        if not _address_is_public_update_destination(address):
+            raise IntelligenceUpdateTransportError(
+                "Intelligence update destination is not a globally routable public address."
+            )
+
+        return (address,)
+
+    port = parsed.port or 443
+
+    addresses = _resolve_remote_host_addresses(
+        hostname=hostname,
+        port=port,
+        resolver=resolver,
+    )
+
+    blocked = [
+        address for address in addresses if not _address_is_public_update_destination(address)
+    ]
+
+    if blocked:
+        raise IntelligenceUpdateTransportError(
+            "Intelligence update hostname resolved to a non-public address: " + ", ".join(blocked)
+        )
+
+    return addresses
+
+
 def _validate_remote_url(
     value: str,
 ) -> None:
@@ -161,11 +301,52 @@ def _validate_remote_url(
         )
 
 
+def _response_peer_address(
+    response: httpx.Response,
+) -> str:
+    """
+    Return the normalized IP address of the actual connected peer.
+
+    HTTPX/HTTPCore exposes the underlying network stream on normal HTTP
+    responses. Missing or malformed peer information fails closed.
+    """
+
+    stream = response.extensions.get("network_stream")
+
+    if stream is None:
+        raise IntelligenceUpdateTransportError(
+            "Intelligence update transport did not expose the connected peer address."
+        )
+
+    try:
+        server_addr = stream.get_extra_info("server_addr")
+    except Exception as exc:
+        raise IntelligenceUpdateTransportError(
+            "Intelligence update transport could not read the connected peer address."
+        ) from exc
+
+    if not isinstance(server_addr, tuple) or not server_addr:
+        raise IntelligenceUpdateTransportError(
+            "Intelligence update transport returned malformed connected peer information."
+        )
+
+    raw_address = server_addr[0]
+
+    try:
+        return str(ipaddress.ip_address(raw_address))
+    except ValueError as exc:
+        raise IntelligenceUpdateTransportError(
+            f"Intelligence update transport returned invalid peer IP address {raw_address!r}."
+        ) from exc
+
+
 def _fetch_bytes(
     *,
     client: httpx.Client,
     url: str,
     maximum_bytes: int,
+    allowed_peer_addresses: tuple[str, ...],
+    peer_address_getter=_response_peer_address,
 ) -> bytes:
     try:
         with client.stream(
@@ -175,6 +356,7 @@ def _fetch_bytes(
                 "Accept": "application/json",
                 "User-Agent": ("PHP-Sentinel-Intelligence-Updater/0.1"),
             },
+            follow_redirects=False,
         ) as response:
             if response.is_redirect:
                 raise IntelligenceUpdateTransportError(
@@ -182,6 +364,23 @@ def _fetch_bytes(
                 )
 
             response.raise_for_status()
+
+            peer_address = peer_address_getter(response)
+
+            normalized_allowed = {
+                str(ipaddress.ip_address(address)) for address in allowed_peer_addresses
+            }
+
+            if peer_address not in normalized_allowed:
+                raise IntelligenceUpdateTransportError(
+                    "Intelligence update connected peer was not present in the "
+                    "prevalidated DNS address set."
+                )
+
+            if not _address_is_public_update_destination(peer_address):
+                raise IntelligenceUpdateTransportError(
+                    "Intelligence update connected peer is not a globally routable public address."
+                )
 
             chunks: list[bytes] = []
             total = 0
@@ -279,6 +478,8 @@ def stage_remote_bundle(
     timeout_seconds: float = DEFAULT_UPDATE_TIMEOUT_SECONDS,
     maximum_bytes: int = DEFAULT_UPDATE_MAX_BYTES,
     client: httpx.Client | None = None,
+    resolver=socket.getaddrinfo,
+    peer_address_getter=_response_peer_address,
     now: datetime | None = None,
 ) -> IntelligenceUpdateStageMetadata:
     """
@@ -288,8 +489,16 @@ def stage_remote_bundle(
     """
 
     _validate_remote_url(policy_url)
-
     _validate_remote_url(manifest_url)
+
+    policy_addresses = _validate_remote_destination(
+        policy_url,
+        resolver=resolver,
+    )
+    manifest_addresses = _validate_remote_destination(
+        manifest_url,
+        resolver=resolver,
+    )
 
     stage = Path(staging_directory)
 
@@ -300,6 +509,7 @@ def stage_remote_bundle(
         selected_client = httpx.Client(
             timeout=timeout_seconds,
             follow_redirects=False,
+            trust_env=False,
         )
 
         owns_client = True
@@ -309,12 +519,16 @@ def stage_remote_bundle(
             client=selected_client,
             url=policy_url,
             maximum_bytes=maximum_bytes,
+            allowed_peer_addresses=(policy_addresses),
+            peer_address_getter=(peer_address_getter),
         )
 
         manifest_bytes = _fetch_bytes(
             client=selected_client,
             url=manifest_url,
             maximum_bytes=maximum_bytes,
+            allowed_peer_addresses=(manifest_addresses),
+            peer_address_getter=(peer_address_getter),
         )
 
     finally:
