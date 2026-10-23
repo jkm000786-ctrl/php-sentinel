@@ -15,3 +15,12 @@ services:
       - "127.0.0.1:8080:80"
     volumes:
       - ./lab/patched/index.php:/var/www/html/index.php:ro
+
+
+  vendor-backport-sim:
+    image: php:8.5.12-apache
+    profiles: ["lab"]
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - ./lab/simulated-vendor-backport/index.php:/var/www/html/index.php:ro

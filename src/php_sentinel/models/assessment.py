@@ -6,11 +6,14 @@ from pydantic import BaseModel, Field
 
 from .evidence import Evidence
 from .fingerprint import Fingerprint
+from .vendor import VendorEvidence
 
 
 class AssessmentStatus(str, Enum):
     NOT_PHP = "not_php"
     PATCHED_UPSTREAM = "patched_upstream"
+    PATCHED_VENDOR = "patched_vendor"
+    POTENTIALLY_AFFECTED = "potentially_affected"
     NEEDS_VENDOR_EVIDENCE = "needs_vendor_evidence"
     INCONCLUSIVE = "inconclusive"
 
@@ -23,8 +26,10 @@ class Assessment(BaseModel):
     server: str | None = None
     x_powered_by: str | None = None
     fingerprint: Fingerprint = Field(default_factory=Fingerprint)
+    vendor_evidence: VendorEvidence | None = None
     exposure_priority: str = "unknown"
     status: AssessmentStatus = AssessmentStatus.INCONCLUSIVE
     applicable_cves: list[str] = Field(default_factory=list)
     rationale: list[str] = Field(default_factory=list)
+    remediation: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
