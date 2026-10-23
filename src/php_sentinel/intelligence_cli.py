@@ -13,6 +13,11 @@ from php_sentinel.intelligence.repository import (
     load_policy,
     policy_identity,
 )
+from php_sentinel.intelligence.trust import (
+    load_manifest,
+    load_trust_store,
+    verify_manifest,
+)
 
 console = Console()
 
@@ -51,13 +56,64 @@ def main(
         bool,
         typer.Option(
             "--validate-only",
-            help=("Validate policy schema and integrity without using it for assessment."),
+            help=("Validate policy schema and integrity without activating it."),
         ),
     ] = False,
+    verify_manifest_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--verify-manifest",
+            help=("Verify a detached Ed25519 manifest for the selected policy."),
+        ),
+    ] = None,
+    trust_store_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--trust-store",
+            help=("Trusted signer store used with --verify-manifest."),
+        ),
+    ] = None,
 ) -> None:
     policy = _load_or_exit(policy_path)
 
     identity = policy_identity(policy)
+
+    if verify_manifest_path is not None or trust_store_path is not None:
+        if verify_manifest_path is None or trust_store_path is None:
+            console.print(
+                "[bold red]Both --verify-manifest and --trust-store are required.[/bold red]"
+            )
+            raise typer.Exit(code=2)
+
+        try:
+            manifest = load_manifest(verify_manifest_path)
+            trust_store = load_trust_store(trust_store_path)
+        except (
+            OSError,
+            ValueError,
+            ValidationError,
+            json.JSONDecodeError,
+        ) as exc:
+            console.print(f"[bold red]Trust data validation failed:[/bold red] {exc}")
+            raise typer.Exit(code=2) from exc
+
+        decision = verify_manifest(
+            policy,
+            manifest,
+            trust_store,
+        )
+
+        typer.echo(
+            json.dumps(
+                decision.model_dump(mode="json"),
+                indent=2,
+            )
+        )
+
+        if not decision.trusted:
+            raise typer.Exit(code=3)
+
+        return
 
     if json_output:
         typer.echo(

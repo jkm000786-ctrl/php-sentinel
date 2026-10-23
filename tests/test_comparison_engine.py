@@ -217,3 +217,58 @@ def test_policy_change_is_explicitly_reported(
     text = " ".join(result.changes).lower()
 
     assert "intelligence policy changed" in text
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_trust_change_is_explicitly_reported(
+    mock_fetch,
+):
+    from php_sentinel.intelligence.repository import (
+        default_policy,
+        policy_sha256,
+    )
+    from php_sentinel.models.intelligence_trust import (
+        IntelligenceTrustDecision,
+        IntelligenceTrustState,
+    )
+
+    mock_fetch.side_effect = [
+        response("8.5.12"),
+        response("8.5.12"),
+    ]
+
+    policy = default_policy()
+
+    before = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+        intelligence_policy=policy,
+    )
+
+    signed = IntelligenceTrustDecision(
+        state=IntelligenceTrustState.TRUSTED,
+        trusted=True,
+        policy_id=policy.policy_id,
+        policy_sha256=policy_sha256(policy),
+        signer_id="test-signer",
+        algorithm="ed25519",
+        rationale=["test trust transition"],
+    )
+
+    after = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+        intelligence_policy=policy,
+        intelligence_trust=signed,
+    )
+
+    result = compare_reports(
+        before,
+        after,
+    )
+
+    assert result.same_intelligence_policy is True
+
+    assert result.same_intelligence_trust is False
+
+    assert result.overall_state.value == "trust_changed"

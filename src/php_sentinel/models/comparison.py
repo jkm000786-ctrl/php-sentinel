@@ -11,6 +11,7 @@ class ComparisonState(str, Enum):
     UNCHANGED = "unchanged"
     EVIDENCE_CHANGED = "evidence_changed"
     POLICY_CHANGED = "policy_changed"
+    TRUST_CHANGED = "trust_changed"
     INCOMPARABLE = "incomparable"
 
 
@@ -35,14 +36,18 @@ class ComparisonReport(BaseModel):
     same_policy_version: bool
     same_canonical_evidence: bool
 
-    # None means both reports are legacy and do not carry
-    # intelligence-policy provenance.
     same_intelligence_policy: bool | None = None
+    same_intelligence_trust: bool | None = None
 
     intelligence_policy_before: str | None = None
     intelligence_policy_after: str | None = None
     intelligence_sha256_before: str | None = None
     intelligence_sha256_after: str | None = None
+
+    intelligence_trust_before: str | None = None
+    intelligence_trust_after: str | None = None
+    intelligence_signer_before: str | None = None
+    intelligence_signer_after: str | None = None
 
     php_version_before: str | None = None
     php_version_after: str | None = None

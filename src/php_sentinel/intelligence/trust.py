@@ -1,0 +1,324 @@
+from __future__ import annotations
+
+import base64
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
+from php_sentinel.intelligence.repository import (
+    default_policy,
+    load_policy,
+    policy_sha256,
+)
+from php_sentinel.models.intelligence_policy import (
+    IntelligencePolicy,
+)
+from php_sentinel.models.intelligence_trust import (
+    IntelligenceManifest,
+    IntelligenceTrustDecision,
+    IntelligenceTrustState,
+    TrustStore,
+)
+
+SUPPORTED_MANIFEST_VERSION = 1
+
+
+def manifest_signing_payload(
+    manifest: IntelligenceManifest,
+) -> dict[str, object]:
+    return {
+        "manifest_version": manifest.manifest_version,
+        "policy_id": manifest.policy_id,
+        "schema_version": manifest.schema_version,
+        "policy_sha256": manifest.policy_sha256,
+        "issued_at": (manifest.issued_at.isoformat()),
+        "signer_id": manifest.signer_id,
+        "algorithm": manifest.algorithm,
+    }
+
+
+def manifest_signing_bytes(
+    manifest: IntelligenceManifest,
+) -> bytes:
+    return json.dumps(
+        manifest_signing_payload(manifest),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def load_manifest(
+    path: Path | str,
+) -> IntelligenceManifest:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    manifest = IntelligenceManifest.model_validate(data)
+
+    if manifest.manifest_version != SUPPORTED_MANIFEST_VERSION:
+        raise ValueError(
+            "Unsupported intelligence manifest "
+            f"version={manifest.manifest_version}. "
+            "Supported version: "
+            f"{SUPPORTED_MANIFEST_VERSION}."
+        )
+
+    return manifest
+
+
+def load_trust_store(
+    path: Path | str,
+) -> TrustStore:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    return TrustStore.model_validate(data)
+
+
+def bundled_policy_trust(
+    policy: IntelligencePolicy,
+) -> IntelligenceTrustDecision:
+    return IntelligenceTrustDecision(
+        state=(IntelligenceTrustState.BUNDLED_TRUSTED),
+        trusted=True,
+        policy_id=policy.policy_id,
+        policy_sha256=policy_sha256(policy),
+        signer_id="php-sentinel-package",
+        algorithm="package-bound",
+        rationale=[
+            (
+                "The intelligence policy is the "
+                "validated policy bundled with this "
+                "PHP Sentinel installation."
+            ),
+            (
+                "Bundled trust establishes package-local "
+                "trust, not independent PHP upstream "
+                "publisher authentication."
+            ),
+        ],
+    )
+
+
+def unsigned_policy_trust(
+    policy: IntelligencePolicy,
+) -> IntelligenceTrustDecision:
+    return IntelligenceTrustDecision(
+        state=IntelligenceTrustState.UNSIGNED,
+        trusted=False,
+        policy_id=policy.policy_id,
+        policy_sha256=policy_sha256(policy),
+        rationale=[("The policy was supplied without a verified trusted intelligence manifest.")],
+    )
+
+
+def resolve_policy_trust(
+    policy: IntelligencePolicy,
+    supplied: (IntelligenceTrustDecision | None) = None,
+) -> IntelligenceTrustDecision:
+    actual_digest = policy_sha256(policy)
+
+    if supplied is not None:
+        if supplied.policy_id != policy.policy_id or supplied.policy_sha256 != actual_digest:
+            return IntelligenceTrustDecision(
+                state=(IntelligenceTrustState.METADATA_MISMATCH),
+                trusted=False,
+                policy_id=policy.policy_id,
+                policy_sha256=actual_digest,
+                signer_id=supplied.signer_id,
+                algorithm=supplied.algorithm,
+                rationale=[
+                    (
+                        "The supplied trust decision "
+                        "does not match the policy being "
+                        "used for assessment."
+                    )
+                ],
+            )
+
+        return supplied
+
+    bundled = default_policy()
+
+    if policy.policy_id == bundled.policy_id and actual_digest == policy_sha256(bundled):
+        return bundled_policy_trust(policy)
+
+    return unsigned_policy_trust(policy)
+
+
+def verify_manifest(
+    policy: IntelligencePolicy,
+    manifest: IntelligenceManifest,
+    trust_store: TrustStore,
+) -> IntelligenceTrustDecision:
+    digest = policy_sha256(policy)
+
+    if manifest.algorithm != "ed25519":
+        return IntelligenceTrustDecision(
+            state=(IntelligenceTrustState.UNSUPPORTED_ALGORITHM),
+            trusted=False,
+            policy_id=policy.policy_id,
+            policy_sha256=digest,
+            signer_id=manifest.signer_id,
+            algorithm=manifest.algorithm,
+            rationale=[("The manifest signature algorithm is not supported.")],
+        )
+
+    if manifest.policy_id != policy.policy_id or manifest.schema_version != policy.schema_version:
+        return IntelligenceTrustDecision(
+            state=(IntelligenceTrustState.METADATA_MISMATCH),
+            trusted=False,
+            policy_id=policy.policy_id,
+            policy_sha256=digest,
+            signer_id=manifest.signer_id,
+            algorithm=manifest.algorithm,
+            rationale=[("Manifest policy metadata does not match the validated policy.")],
+        )
+
+    if manifest.policy_sha256 != digest:
+        return IntelligenceTrustDecision(
+            state=(IntelligenceTrustState.DIGEST_MISMATCH),
+            trusted=False,
+            policy_id=policy.policy_id,
+            policy_sha256=digest,
+            signer_id=manifest.signer_id,
+            algorithm=manifest.algorithm,
+            rationale=[("Manifest policy SHA-256 does not match the validated policy content.")],
+        )
+
+    signer = next(
+        (
+            item
+            for item in trust_store.signers
+            if (item.signer_id == manifest.signer_id and item.enabled)
+        ),
+        None,
+    )
+
+    if signer is None:
+        return IntelligenceTrustDecision(
+            state=(IntelligenceTrustState.UNKNOWN_SIGNER),
+            trusted=False,
+            policy_id=policy.policy_id,
+            policy_sha256=digest,
+            signer_id=manifest.signer_id,
+            algorithm=manifest.algorithm,
+            rationale=[("Manifest signer is not present as an enabled trusted signer.")],
+        )
+
+    if signer.algorithm != manifest.algorithm:
+        return IntelligenceTrustDecision(
+            state=(IntelligenceTrustState.UNSUPPORTED_ALGORITHM),
+            trusted=False,
+            policy_id=policy.policy_id,
+            policy_sha256=digest,
+            signer_id=manifest.signer_id,
+            algorithm=manifest.algorithm,
+            rationale=[("Signer algorithm does not match the manifest algorithm.")],
+        )
+
+    try:
+        public_key_bytes = base64.b64decode(
+            signer.public_key_b64,
+            validate=True,
+        )
+        signature = base64.b64decode(
+            manifest.signature_b64,
+            validate=True,
+        )
+
+        public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+
+        public_key.verify(
+            signature,
+            manifest_signing_bytes(manifest),
+        )
+    except (
+        ValueError,
+        InvalidSignature,
+    ):
+        return IntelligenceTrustDecision(
+            state=(IntelligenceTrustState.INVALID_SIGNATURE),
+            trusted=False,
+            policy_id=policy.policy_id,
+            policy_sha256=digest,
+            signer_id=manifest.signer_id,
+            algorithm=manifest.algorithm,
+            rationale=[("Ed25519 signature verification failed.")],
+        )
+
+    return IntelligenceTrustDecision(
+        state=IntelligenceTrustState.TRUSTED,
+        trusted=True,
+        policy_id=policy.policy_id,
+        policy_sha256=digest,
+        signer_id=manifest.signer_id,
+        algorithm=manifest.algorithm,
+        rationale=[
+            ("The policy digest matches the manifest."),
+            ("The Ed25519 signature was verified against an enabled trusted signer."),
+        ],
+    )
+
+
+def load_verified_external_policy(
+    *,
+    policy_path: Path | str,
+    manifest_path: Path | str,
+    trust_store_path: Path | str,
+) -> tuple[
+    IntelligencePolicy,
+    IntelligenceTrustDecision,
+]:
+    policy = load_policy(policy_path)
+    manifest = load_manifest(manifest_path)
+    trust_store = load_trust_store(trust_store_path)
+
+    decision = verify_manifest(
+        policy,
+        manifest,
+        trust_store,
+    )
+
+    if not decision.trusted:
+        raise ValueError(
+            f"External intelligence policy trust verification failed: {decision.state.value}."
+        )
+
+    return policy, decision
+
+
+def create_signed_manifest(
+    *,
+    policy: IntelligencePolicy,
+    signer_id: str,
+    private_key_b64: str,
+    issued_at: datetime | None = None,
+) -> IntelligenceManifest:
+    private_bytes = base64.b64decode(
+        private_key_b64,
+        validate=True,
+    )
+
+    private_key = Ed25519PrivateKey.from_private_bytes(private_bytes)
+
+    manifest = IntelligenceManifest(
+        policy_id=policy.policy_id,
+        schema_version=policy.schema_version,
+        policy_sha256=policy_sha256(policy),
+        issued_at=(issued_at or datetime.now(UTC)),
+        signer_id=signer_id,
+        algorithm="ed25519",
+        signature_b64="pending",
+    )
+
+    signature = private_key.sign(manifest_signing_bytes(manifest))
+
+    return manifest.model_copy(
+        update={"signature_b64": (base64.b64encode(signature).decode("ascii"))}
+    )

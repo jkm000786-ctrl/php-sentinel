@@ -154,3 +154,42 @@ def test_legacy_provenance_without_intelligence_fields_loads():
     assert provenance.intelligence_policy_id is None
 
     assert provenance.intelligence_sha256 is None
+
+
+def test_bundled_policy_is_marked_package_trusted():
+    provenance = build_provenance(
+        canonical_payload={
+            "target": "bundled",
+        },
+        target_identity_payload={
+            "target": "bundled",
+        },
+    )
+
+    assert provenance.intelligence_trust_state == "bundled_trusted"
+
+    assert provenance.intelligence_signer_id == "php-sentinel-package"
+
+
+def test_custom_unsigned_policy_is_not_marked_trusted():
+    from php_sentinel.intelligence.repository import (
+        default_policy,
+    )
+
+    policy = default_policy().model_copy(deep=True)
+
+    policy.fixed_versions["8.5"] = "8.5.13"
+
+    provenance = build_provenance(
+        canonical_payload={
+            "target": "custom",
+        },
+        target_identity_payload={
+            "target": "custom",
+        },
+        intelligence_policy=policy,
+    )
+
+    assert provenance.intelligence_trust_state == "unsigned"
+
+    assert provenance.intelligence_signer_id is None

@@ -5,7 +5,9 @@ from php_sentinel.models.comparison import (
     ComparisonState,
     CVEChange,
 )
-from php_sentinel.models.unified import UnifiedAssessmentReport
+from php_sentinel.models.unified import (
+    UnifiedAssessmentReport,
+)
 
 RISK_RANK = {
     "not_applicable": 0,
@@ -60,7 +62,6 @@ def compare_reports(
         after_finding = after_findings.get(cve_id)
 
         before_state = before_finding.state.value if before_finding else None
-
         after_state = after_finding.state.value if after_finding else None
 
         cve_changes.append(
@@ -108,10 +109,28 @@ def compare_reports(
     else:
         same_intelligence_policy = False
 
+    before_trust = before.provenance.intelligence_trust_state
+    after_trust = after.provenance.intelligence_trust_state
+
+    before_signer = before.provenance.intelligence_signer_id
+    after_signer = after.provenance.intelligence_signer_id
+
+    if (
+        before_trust is None
+        and after_trust is None
+        and before_signer is None
+        and after_signer is None
+    ):
+        same_intelligence_trust = None
+    else:
+        same_intelligence_trust = before_trust == after_trust and before_signer == after_signer
+
     if not same_requested_target and not allow_cross_target:
         overall = ComparisonState.INCOMPARABLE
     elif same_intelligence_policy is False:
         overall = ComparisonState.POLICY_CHANGED
+    elif same_intelligence_trust is False:
+        overall = ComparisonState.TRUST_CHANGED
 
     same_target_identity = (
         before.provenance.target_identity_sha256 == after.provenance.target_identity_sha256
@@ -177,6 +196,20 @@ def compare_reports(
             "intelligence policies produced the reports."
         )
 
+    if same_intelligence_trust is False:
+        changes.append(
+            "Intelligence trust changed: "
+            f"{before_trust or 'legacy/unknown'} "
+            f"({before_signer or 'unknown'}) -> "
+            f"{after_trust or 'legacy/unknown'} "
+            f"({after_signer or 'unknown'})."
+        )
+        changes.append(
+            "Overall remediation/regression classification "
+            "was suppressed because intelligence trust "
+            "provenance changed."
+        )
+
     if not same_requested_target:
         changes.append(
             f"Requested target changed: {before.http.requested_url} -> {after.http.requested_url}."
@@ -186,29 +219,35 @@ def compare_reports(
             changes.append("Cross-target comparison was explicitly authorized by the operator.")
         else:
             changes.append(
-                "Overall remediation/regression classification was suppressed "
-                "because the reports refer to different requested targets."
+                "Overall remediation/regression classification "
+                "was suppressed because the reports refer to "
+                "different requested targets."
             )
 
     return ComparisonReport(
-        before_report_id=before.provenance.report_id,
-        after_report_id=after.provenance.report_id,
+        before_report_id=(before.provenance.report_id),
+        after_report_id=(after.provenance.report_id),
         before_target=before.target,
         after_target=after.target,
         overall_state=overall,
-        same_requested_target=same_requested_target,
-        same_target_identity=same_target_identity,
-        same_policy_version=same_policy_version,
-        same_canonical_evidence=same_canonical_evidence,
-        same_intelligence_policy=same_intelligence_policy,
+        same_requested_target=(same_requested_target),
+        same_target_identity=(same_target_identity),
+        same_policy_version=(same_policy_version),
+        same_canonical_evidence=(same_canonical_evidence),
+        same_intelligence_policy=(same_intelligence_policy),
+        same_intelligence_trust=(same_intelligence_trust),
         intelligence_policy_before=(before.provenance.intelligence_policy_id),
         intelligence_policy_after=(after.provenance.intelligence_policy_id),
         intelligence_sha256_before=(before_intelligence_sha),
         intelligence_sha256_after=(after_intelligence_sha),
-        php_version_before=before.assessment.php_version,
-        php_version_after=after.assessment.php_version,
-        assessment_before=before.assessment.status.value,
-        assessment_after=after.assessment.status.value,
+        intelligence_trust_before=(before_trust),
+        intelligence_trust_after=(after_trust),
+        intelligence_signer_before=(before_signer),
+        intelligence_signer_after=(after_signer),
+        php_version_before=(before.assessment.php_version),
+        php_version_after=(after.assessment.php_version),
+        assessment_before=(before.assessment.status.value),
+        assessment_after=(after.assessment.status.value),
         changes=changes,
         cve_changes=cve_changes,
     )

@@ -12,6 +12,7 @@ from php_sentinel.intelligence.repository import (
     policy_identity,
 )
 from php_sentinel.models.intelligence_policy import IntelligencePolicy
+from php_sentinel.models.intelligence_trust import IntelligenceTrustDecision
 from php_sentinel.models.unified import (
     HTTPMetadata,
     UnifiedAssessmentReport,
@@ -66,6 +67,7 @@ def run_unified_assessment(
     advisory_reference: str | None = None,
     lab_validation: ValidationReport | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
+    intelligence_trust: IntelligenceTrustDecision | None = None,
 ) -> UnifiedAssessmentReport:
     selected_policy = intelligence_policy or default_policy()
 
@@ -142,6 +144,7 @@ def run_unified_assessment(
         canonical_payload=canonical_payload,
         target_identity_payload=(target_identity_payload),
         intelligence_policy=selected_policy,
+        intelligence_trust=intelligence_trust,
     )
 
     return UnifiedAssessmentReport(

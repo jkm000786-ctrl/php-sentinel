@@ -12,8 +12,14 @@ from php_sentinel.intelligence.repository import (
     default_policy,
     policy_identity,
 )
+from php_sentinel.intelligence.trust import (
+    resolve_policy_trust,
+)
 from php_sentinel.models.intelligence_policy import (
     IntelligencePolicy,
+)
+from php_sentinel.models.intelligence_trust import (
+    IntelligenceTrustDecision,
 )
 from php_sentinel.models.provenance import (
     EvidenceProvenance,
@@ -77,11 +83,17 @@ def build_provenance(
     *,
     canonical_payload: dict,
     target_identity_payload: dict,
-    intelligence_policy: (IntelligencePolicy | None) = None,
+    intelligence_policy: IntelligencePolicy | None = None,
+    intelligence_trust: IntelligenceTrustDecision | None = None,
 ) -> EvidenceProvenance:
     selected_policy = intelligence_policy or default_policy()
 
     identity = policy_identity(selected_policy)
+
+    trust = resolve_policy_trust(
+        selected_policy,
+        intelligence_trust,
+    )
 
     return EvidenceProvenance(
         report_id=str(uuid4()),
@@ -94,4 +106,7 @@ def build_provenance(
         intelligence_schema_version=int(identity["schema_version"]),
         intelligence_published_date=str(identity["published_date"]),
         intelligence_sha256=str(identity["sha256"]),
+        intelligence_trust_state=(trust.state.value),
+        intelligence_signer_id=(trust.signer_id),
+        intelligence_signature_algorithm=(trust.algorithm),
     )
