@@ -507,6 +507,8 @@ def verify_staged_bundle(
         verified_at=(now or datetime.now(UTC)),
         source_policy_url=(metadata.policy_url),
         source_manifest_url=(metadata.manifest_url),
+        source_id=metadata.source_id,
+        channel=metadata.channel,
         staged_policy_transport_sha256=(metadata.policy_transport_sha256),
         staged_manifest_transport_sha256=(metadata.manifest_transport_sha256),
     )
@@ -755,6 +757,8 @@ def inspect_verified_cache_entry(
         generation=(manifest.generation),
         manifest_version=(manifest.manifest_version),
         signer_id=(manifest.signer_id),
+        source_id=metadata.source_id,
+        channel=metadata.channel,
         bundle_sha256=(bundle_digest),
         verification_metadata_present=True,
         verification_metadata_consistent=True,

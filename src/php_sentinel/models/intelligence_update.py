@@ -14,6 +14,9 @@ class IntelligenceUpdateStageMetadata(BaseModel):
     policy_url: str
     manifest_url: str
 
+    source_id: str | None = None
+    channel: str | None = None
+
     fetched_at: datetime
 
     policy_transport_sha256: str = Field(
@@ -66,6 +69,9 @@ class IntelligenceUpdateVerificationMetadata(BaseModel):
     source_policy_url: str
     source_manifest_url: str
 
+    source_id: str | None = None
+    channel: str | None = None
+
     staged_policy_transport_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
     )
@@ -99,6 +105,9 @@ class IntelligenceVerifiedCacheEntry(BaseModel):
     )
 
     signer_id: str
+
+    source_id: str | None = None
+    channel: str | None = None
 
     bundle_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
