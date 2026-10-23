@@ -12,6 +12,7 @@ from php_sentinel.intelligence.delegation import (
     create_signed_signer_delegation,
     delegation_is_revoked,
     revocation_signing_bytes,
+    signer_delegation_revocation_sha256,
     signer_delegation_sha256,
     verify_delegation_revocation,
 )
@@ -19,6 +20,7 @@ from php_sentinel.intelligence.lifecycle import (
     evaluate_lifecycle,
     load_lifecycle_state,
     record_accepted_lifecycle,
+    record_observed_delegation_revocations,
     save_lifecycle_state,
 )
 from php_sentinel.intelligence.registry_trust import (
@@ -26,6 +28,7 @@ from php_sentinel.intelligence.registry_trust import (
     evaluate_source_registry_lifecycle,
     load_source_registry_state,
     record_accepted_source_registry,
+    record_observed_source_registry_revocations,
     save_source_registry_state,
     source_registry_sha256,
     verify_source_registry_manifest,
@@ -655,3 +658,277 @@ def test_intelligence_and_registry_history_are_context_separated():
     assert "registry|old|new" not in intelligence.delegation_records
 
     assert "intelligence|old|new" not in registry.delegation_records
+
+
+def test_intelligence_revocation_history_survives_revocation_removal(
+    tmp_path,
+):
+    (
+        old_private,
+        policy,
+        manifest,
+        delegation,
+        trust_store,
+        _,
+    ) = intelligence_rotation(sequence=3)
+
+    revocation = create_signed_delegation_revocation(
+        delegation=delegation,
+        predecessor_private_key_b64=old_private,
+        revocation_sequence=2,
+        issued_at=NOW,
+    )
+
+    state_path = tmp_path / "intelligence-state.json"
+
+    initial = LifecycleStateStore(
+        records={
+            policy.policy_id: LifecycleStateRecord(
+                generation=5,
+                policy_sha256=policy_sha256(policy),
+                signer_id="old",
+                accepted_at=NOW,
+            )
+        }
+    )
+
+    save_lifecycle_state(
+        state_path,
+        initial,
+    )
+
+    recorded = record_observed_delegation_revocations(
+        path=state_path,
+        revocations=[revocation],
+        expected_state=initial,
+        now=NOW,
+    )
+
+    key = "intelligence|old|new|3|" + signer_delegation_sha256(delegation)
+
+    assert recorded.revocation_records[key].revocation_sequence == 2
+    assert recorded.revocation_records[
+        key
+    ].revocation_sha256 == signer_delegation_revocation_sha256(revocation)
+
+    # Current TrustStore no longer carries the revocation.
+    trust_without_revocation = verify_manifest(
+        policy,
+        manifest,
+        trust_store,
+        now=NOW,
+    )
+
+    assert "old" in (trust_without_revocation.authorized_predecessor_signer_ids)
+
+    decision = evaluate_lifecycle(
+        policy=policy,
+        manifest=manifest,
+        trust=trust_without_revocation,
+        state=recorded,
+        now=NOW,
+    )
+
+    assert decision.activatable is False
+    assert decision.state.value == "signer_changed"
+
+
+def test_registry_revocation_history_survives_revocation_removal(
+    tmp_path,
+):
+    (
+        old_private,
+        registry,
+        manifest,
+        delegation,
+        trust_store,
+        _,
+    ) = registry_rotation(sequence=3)
+
+    revocation = create_signed_delegation_revocation(
+        delegation=delegation,
+        predecessor_private_key_b64=old_private,
+        revocation_sequence=4,
+        issued_at=NOW,
+    )
+
+    state_path = tmp_path / "registry-state.json"
+
+    initial = SourceRegistryStateStore(
+        records={
+            manifest.registry_id: SourceRegistryStateRecord(
+                generation=5,
+                registry_sha256=source_registry_sha256(registry),
+                signer_id="old",
+                accepted_at=NOW,
+            )
+        }
+    )
+
+    save_source_registry_state(
+        state_path,
+        initial,
+    )
+
+    recorded = record_observed_source_registry_revocations(
+        path=state_path,
+        revocations=[revocation],
+        expected_state=initial,
+        now=NOW,
+    )
+
+    key = "registry|old|new|3|" + signer_delegation_sha256(delegation)
+
+    assert recorded.revocation_records[key].revocation_sequence == 4
+    assert recorded.revocation_records[
+        key
+    ].revocation_sha256 == signer_delegation_revocation_sha256(revocation)
+
+    # Current TrustStore no longer carries the revocation.
+    trust_without_revocation = verify_source_registry_manifest(
+        registry=registry,
+        manifest=manifest,
+        trust_store=trust_store,
+        now=NOW,
+    )
+
+    assert "old" in (trust_without_revocation.authorized_predecessor_signer_ids)
+
+    decision = evaluate_source_registry_lifecycle(
+        registry=registry,
+        manifest=manifest,
+        trust=trust_without_revocation,
+        state=recorded,
+        now=NOW,
+    )
+
+    assert decision.activatable is False
+    assert decision.state.value == "signer_changed"
+
+
+def test_intelligence_revocation_history_rejects_sequence_rollback(
+    tmp_path,
+):
+    (
+        old_private,
+        _,
+        _,
+        delegation,
+        _,
+        _,
+    ) = intelligence_rotation(sequence=2)
+
+    high = create_signed_delegation_revocation(
+        delegation=delegation,
+        predecessor_private_key_b64=old_private,
+        revocation_sequence=5,
+        issued_at=NOW,
+    )
+
+    low = create_signed_delegation_revocation(
+        delegation=delegation,
+        predecessor_private_key_b64=old_private,
+        revocation_sequence=4,
+        issued_at=NOW,
+    )
+
+    path = tmp_path / "state.json"
+
+    initial = LifecycleStateStore()
+
+    save_lifecycle_state(
+        path,
+        initial,
+    )
+
+    recorded = record_observed_delegation_revocations(
+        path=path,
+        revocations=[high],
+        expected_state=initial,
+        now=NOW,
+    )
+
+    import pytest
+
+    from php_sentinel.intelligence.lifecycle import (
+        LifecycleStateStorageError,
+    )
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="older delegation revocation sequence",
+    ):
+        record_observed_delegation_revocations(
+            path=path,
+            revocations=[low],
+            expected_state=recorded,
+            now=NOW,
+        )
+
+
+def test_registry_revocation_history_rejects_sequence_rollback(
+    tmp_path,
+):
+    (
+        old_private,
+        _,
+        _,
+        delegation,
+        _,
+        _,
+    ) = registry_rotation(sequence=2)
+
+    high = create_signed_delegation_revocation(
+        delegation=delegation,
+        predecessor_private_key_b64=old_private,
+        revocation_sequence=7,
+        issued_at=NOW,
+    )
+
+    low = create_signed_delegation_revocation(
+        delegation=delegation,
+        predecessor_private_key_b64=old_private,
+        revocation_sequence=6,
+        issued_at=NOW,
+    )
+
+    path = tmp_path / "registry-state.json"
+
+    initial = SourceRegistryStateStore()
+
+    save_source_registry_state(
+        path,
+        initial,
+    )
+
+    recorded = record_observed_source_registry_revocations(
+        path=path,
+        revocations=[high],
+        expected_state=initial,
+        now=NOW,
+    )
+
+    import pytest
+
+    from php_sentinel.intelligence.registry_trust import (
+        SourceRegistryStateStorageError,
+    )
+
+    with pytest.raises(
+        SourceRegistryStateStorageError,
+        match="older registry delegation revocation sequence",
+    ):
+        record_observed_source_registry_revocations(
+            path=path,
+            revocations=[low],
+            expected_state=recorded,
+            now=NOW,
+        )
+
+
+def test_revocation_history_contexts_remain_separate():
+    intelligence = LifecycleStateStore()
+    registry = SourceRegistryStateStore()
+
+    assert intelligence.revocation_records == {}
+    assert registry.revocation_records == {}

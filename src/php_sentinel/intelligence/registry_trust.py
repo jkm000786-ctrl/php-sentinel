@@ -15,6 +15,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from php_sentinel.intelligence.delegation import (
     resolve_authorized_predecessor_evidence,
+    resolve_verified_delegation_revocations,
+    signer_delegation_revocation_sha256,
 )
 from php_sentinel.intelligence.lifecycle import (
     lifecycle_state_lock,
@@ -28,6 +30,7 @@ from php_sentinel.intelligence.source_registry import (
 from php_sentinel.intelligence.trust import load_trust_store
 from php_sentinel.models.intelligence_lifecycle import (
     DelegationHistoryRecord,
+    DelegationRevocationHistoryRecord,
 )
 from php_sentinel.models.intelligence_source import (
     IntelligenceSourceRegistry,
@@ -434,6 +437,16 @@ def evaluate_source_registry_lifecycle(
 
             delegation_history_valid = delegation_evidence is not None
 
+            if delegation_evidence is not None and state is not None:
+                revocation_key = (
+                    f"registry|{record.signer_id}|{trust.signer_id}|"
+                    f"{delegation_evidence.sequence}|"
+                    f"{delegation_evidence.delegation_sha256}"
+                )
+
+                if revocation_key in state.revocation_records:
+                    delegation_history_valid = False
+
             if delegation_evidence is not None and historical_delegation is not None:
                 if delegation_evidence.sequence < historical_delegation.sequence:
                     delegation_history_valid = False
@@ -665,6 +678,67 @@ def save_source_registry_state(
         )
 
 
+def record_observed_source_registry_revocations(
+    *,
+    path: Path | str,
+    revocations,
+    expected_state: SourceRegistryStateStore,
+    now: datetime | None = None,
+) -> SourceRegistryStateStore:
+    observed_at = now or datetime.now(UTC)
+
+    with lifecycle_state_lock(path):
+        current = load_source_registry_state(path)
+
+        if current.model_dump(mode="json") != expected_state.model_dump(mode="json"):
+            raise SourceRegistryStateStorageError(
+                "Source-registry lifecycle state changed before revocation observation commit."
+            )
+
+        updated = current.model_copy(deep=True)
+
+        for revocation in revocations:
+            key = (
+                f"{revocation.context}|"
+                f"{revocation.predecessor_signer_id}|"
+                f"{revocation.successor_signer_id}|"
+                f"{revocation.delegation_sequence}|"
+                f"{revocation.delegation_sha256}"
+            )
+
+            digest = signer_delegation_revocation_sha256(revocation)
+            historical = updated.revocation_records.get(key)
+
+            if historical is not None:
+                if revocation.revocation_sequence < historical.revocation_sequence:
+                    raise SourceRegistryStateStorageError(
+                        "Refusing to persist an older registry delegation revocation sequence."
+                    )
+
+                if (
+                    revocation.revocation_sequence == historical.revocation_sequence
+                    and digest != historical.revocation_sha256
+                ):
+                    raise SourceRegistryStateStorageError(
+                        "Refusing same-sequence registry delegation revocation digest replacement."
+                    )
+
+            updated.revocation_records[key] = DelegationRevocationHistoryRecord(
+                delegation_sequence=revocation.delegation_sequence,
+                delegation_sha256=revocation.delegation_sha256,
+                revocation_sequence=revocation.revocation_sequence,
+                revocation_sha256=digest,
+                observed_at=observed_at,
+            )
+
+        _save_source_registry_state_unlocked(
+            path,
+            updated,
+        )
+
+        return updated
+
+
 def record_accepted_source_registry(
     *,
     path: Path | str,
@@ -821,23 +895,74 @@ def activate_signed_source_registry(
     maximum_future_skew_seconds: int = 300,
     now: datetime | None = None,
 ) -> VerifiedSourceRegistry:
-    verified = verify_signed_source_registry(
-        registry_path=registry_path,
-        manifest_path=manifest_path,
-        registry_trust_store_path=(registry_trust_store_path),
-        registry_state_path=(registry_state_path),
+    from php_sentinel.intelligence.source_registry import (
+        load_source_registry,
+    )
+
+    registry = load_source_registry(registry_path)
+    manifest = load_source_registry_manifest(manifest_path)
+    trust_store = load_trust_store(registry_trust_store_path)
+
+    trust = verify_source_registry_manifest(
+        registry=registry,
+        manifest=manifest,
+        trust_store=trust_store,
+        now=now,
+    )
+
+    if not trust.trusted:
+        raise SourceRegistryVerificationError(
+            f"Source-registry trust verification failed: {trust.state.value}."
+        )
+
+    state = load_source_registry_state(registry_state_path)
+
+    revocations = resolve_verified_delegation_revocations(
+        trust_store=trust_store,
+        successor_signer_id=manifest.signer_id,
+        context="registry",
+        now=now,
+    )
+
+    if revocations:
+        state = record_observed_source_registry_revocations(
+            path=registry_state_path,
+            revocations=revocations,
+            expected_state=state,
+            now=now,
+        )
+
+    lifecycle = evaluate_source_registry_lifecycle(
+        registry=registry,
+        manifest=manifest,
+        trust=trust,
+        state=state,
         minimum_generation=minimum_generation,
         maximum_age_days=maximum_age_days,
         maximum_future_skew_seconds=(maximum_future_skew_seconds),
         now=now,
     )
 
+    if not lifecycle.activatable:
+        raise SourceRegistryVerificationError(
+            f"Source-registry lifecycle verification failed: {lifecycle.state.value}."
+        )
+
+    verified = VerifiedSourceRegistry(
+        registry=registry,
+        manifest=manifest,
+        trust=trust,
+        lifecycle=lifecycle,
+        state_snapshot=state,
+        _capability=_REGISTRY_CAPABILITY,
+    )
+
     record_accepted_source_registry(
         path=registry_state_path,
-        registry=verified.registry,
-        manifest=verified.manifest,
-        lifecycle=verified.lifecycle,
-        expected_state=(verified.state_snapshot),
+        registry=registry,
+        manifest=manifest,
+        lifecycle=lifecycle,
+        expected_state=state,
         now=now,
     )
 

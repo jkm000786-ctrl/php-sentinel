@@ -8,11 +8,15 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from php_sentinel.intelligence.delegation import (
+    signer_delegation_revocation_sha256,
+)
 from php_sentinel.intelligence.repository import (
     policy_sha256,
 )
 from php_sentinel.models.intelligence_lifecycle import (
     DelegationHistoryRecord,
+    DelegationRevocationHistoryRecord,
     IntelligenceLifecycleDecision,
     IntelligenceLifecyclePolicy,
     IntelligenceLifecycleState,
@@ -480,6 +484,16 @@ def evaluate_lifecycle(
 
             delegation_history_valid = delegation_evidence is not None
 
+            if delegation_evidence is not None and state is not None:
+                revocation_key = (
+                    f"intelligence|{record.signer_id}|{trust.signer_id}|"
+                    f"{delegation_evidence.sequence}|"
+                    f"{delegation_evidence.delegation_sha256}"
+                )
+
+                if revocation_key in state.revocation_records:
+                    delegation_history_valid = False
+
             if delegation_evidence is not None and historical_delegation is not None:
                 if delegation_evidence.sequence < historical_delegation.sequence:
                     delegation_history_valid = False
@@ -564,6 +578,70 @@ def evaluate_lifecycle(
             )
         ],
     )
+
+
+def record_observed_delegation_revocations(
+    *,
+    path: Path | str,
+    revocations,
+    expected_state: LifecycleStateStore | None = None,
+    now: datetime | None = None,
+) -> LifecycleStateStore:
+    observed_at = now or datetime.now(UTC)
+
+    with lifecycle_state_lock(path):
+        current_state = load_lifecycle_state(path)
+
+        if expected_state is not None and current_state.model_dump(
+            mode="json"
+        ) != expected_state.model_dump(mode="json"):
+            raise LifecycleStateStorageError(
+                "Lifecycle-state changed concurrently before revocation "
+                "observation commit; activation must be retried."
+            )
+
+        updated = current_state.model_copy(deep=True)
+
+        for revocation in revocations:
+            key = (
+                f"{revocation.context}|"
+                f"{revocation.predecessor_signer_id}|"
+                f"{revocation.successor_signer_id}|"
+                f"{revocation.delegation_sequence}|"
+                f"{revocation.delegation_sha256}"
+            )
+
+            digest = signer_delegation_revocation_sha256(revocation)
+            historical = updated.revocation_records.get(key)
+
+            if historical is not None:
+                if revocation.revocation_sequence < historical.revocation_sequence:
+                    raise LifecycleStateStorageError(
+                        "Refusing to persist an older delegation revocation sequence."
+                    )
+
+                if (
+                    revocation.revocation_sequence == historical.revocation_sequence
+                    and digest != historical.revocation_sha256
+                ):
+                    raise LifecycleStateStorageError(
+                        "Refusing same-sequence delegation revocation digest replacement."
+                    )
+
+            updated.revocation_records[key] = DelegationRevocationHistoryRecord(
+                delegation_sequence=revocation.delegation_sequence,
+                delegation_sha256=revocation.delegation_sha256,
+                revocation_sequence=revocation.revocation_sequence,
+                revocation_sha256=digest,
+                observed_at=observed_at,
+            )
+
+        _save_lifecycle_state_unlocked(
+            path,
+            updated,
+        )
+
+        return updated
 
 
 def record_accepted_lifecycle(

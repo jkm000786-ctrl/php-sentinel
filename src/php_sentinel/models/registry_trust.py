@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from php_sentinel.models.intelligence_lifecycle import (
     DelegationHistoryRecord,
+    DelegationRevocationHistoryRecord,
 )
 from php_sentinel.models.intelligence_trust import (
     VerifiedSignerDelegationEvidence,
@@ -208,6 +209,13 @@ class SourceRegistryStateStore(BaseModel):
     delegation_records: dict[
         str,
         DelegationHistoryRecord,
+    ] = Field(
+        default_factory=dict,
+    )
+
+    revocation_records: dict[
+        str,
+        DelegationRevocationHistoryRecord,
     ] = Field(
         default_factory=dict,
     )

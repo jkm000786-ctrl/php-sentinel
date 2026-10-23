@@ -3,17 +3,22 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from php_sentinel.intelligence.delegation import (
+    resolve_verified_delegation_revocations,
+)
 from php_sentinel.intelligence.lifecycle import (
     bundled_lifecycle,
     evaluate_lifecycle,
     load_lifecycle_state,
     record_accepted_lifecycle,
+    record_observed_delegation_revocations,
 )
 from php_sentinel.intelligence.repository import (
     default_policy,
 )
 from php_sentinel.intelligence.trust import (
     bundled_policy_trust,
+    load_trust_store,
     load_verified_external_bundle,
 )
 from php_sentinel.models.intelligence_lifecycle import (
@@ -137,17 +142,35 @@ def activate_intelligence_with_lifecycle(
         if lifecycle_state_path is not None:
             state = load_lifecycle_state(lifecycle_state_path)
 
+        lifecycle_policy = IntelligenceLifecyclePolicy(
+            minimum_generation=(minimum_generation),
+            maximum_age_days=(maximum_age_days),
+            maximum_future_skew_seconds=(maximum_future_skew_seconds),
+        )
+
+        if lifecycle_state_path is not None:
+            trust_store = load_trust_store(trust_store_path)
+
+            revocations = resolve_verified_delegation_revocations(
+                trust_store=trust_store,
+                successor_signer_id=manifest.signer_id,
+                context="intelligence",
+                now=now,
+            )
+
+            if revocations:
+                state = record_observed_delegation_revocations(
+                    path=lifecycle_state_path,
+                    revocations=revocations,
+                    expected_state=state,
+                    now=now,
+                )
+
         lifecycle = evaluate_lifecycle(
             policy=policy,
             manifest=manifest,
             trust=trust,
-            lifecycle_policy=(
-                IntelligenceLifecyclePolicy(
-                    minimum_generation=(minimum_generation),
-                    maximum_age_days=(maximum_age_days),
-                    maximum_future_skew_seconds=(maximum_future_skew_seconds),
-                )
-            ),
+            lifecycle_policy=lifecycle_policy,
             state=state,
             now=now,
         )

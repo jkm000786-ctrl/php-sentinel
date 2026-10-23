@@ -233,6 +233,19 @@ def revocation_signing_bytes(
     return DELEGATION_REVOCATION_SIGNATURE_DOMAIN_V1 + canonical
 
 
+def signer_delegation_revocation_sha256(
+    revocation: SignerDelegationRevocation,
+) -> str:
+    signature = base64.b64decode(
+        revocation.signature_b64,
+        validate=True,
+    )
+
+    payload = revocation_signing_bytes(revocation) + b"\x00" + signature
+
+    return hashlib.sha256(payload).hexdigest()
+
+
 def create_signed_delegation_revocation(
     *,
     delegation: SignerDelegation,
@@ -358,6 +371,55 @@ def delegation_is_revoked(
             and item.delegation_sequence == delegation.sequence
         )
     )
+
+
+def resolve_verified_delegation_revocations(
+    *,
+    trust_store: TrustStore,
+    successor_signer_id: str,
+    context: str,
+    now: datetime | None = None,
+) -> list[SignerDelegationRevocation]:
+    verified: list[SignerDelegationRevocation] = []
+
+    delegations = {
+        (
+            item.context,
+            item.predecessor_signer_id,
+            item.successor_signer_id,
+            item.sequence,
+            signer_delegation_sha256(item),
+        ): item
+        for item in trust_store.delegations
+        if (item.context == context and item.successor_signer_id == successor_signer_id)
+    }
+
+    for revocation in trust_store.delegation_revocations:
+        if revocation.context != context or revocation.successor_signer_id != successor_signer_id:
+            continue
+
+        delegation = delegations.get(
+            (
+                revocation.context,
+                revocation.predecessor_signer_id,
+                revocation.successor_signer_id,
+                revocation.delegation_sequence,
+                revocation.delegation_sha256,
+            )
+        )
+
+        if delegation is None:
+            continue
+
+        if verify_delegation_revocation(
+            revocation=revocation,
+            delegation=delegation,
+            trust_store=trust_store,
+            now=now,
+        ):
+            verified.append(revocation)
+
+    return verified
 
 
 def resolve_authorized_predecessor_evidence(

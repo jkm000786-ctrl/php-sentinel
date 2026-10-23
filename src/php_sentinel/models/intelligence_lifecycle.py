@@ -93,6 +93,26 @@ class DelegationHistoryRecord(BaseModel):
     accepted_at: datetime
 
 
+class DelegationRevocationHistoryRecord(BaseModel):
+    delegation_sequence: int = Field(
+        ge=1,
+    )
+
+    delegation_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    revocation_sequence: int = Field(
+        ge=1,
+    )
+
+    revocation_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    observed_at: datetime
+
+
 class LifecycleStateStore(BaseModel):
     store_version: int = Field(
         default=1,
@@ -108,6 +128,13 @@ class LifecycleStateStore(BaseModel):
     delegation_records: dict[
         str,
         DelegationHistoryRecord,
+    ] = Field(
+        default_factory=dict,
+    )
+
+    revocation_records: dict[
+        str,
+        DelegationRevocationHistoryRecord,
     ] = Field(
         default_factory=dict,
     )
