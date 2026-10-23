@@ -712,3 +712,174 @@ def test_promotion_rejects_existing_non_directory_cache_destination(
             tmp_path,
             generation=5,
         )
+
+
+def test_discovery_ignores_symlinked_cache_entry_directory(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        verified_root,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    symlinked = verified_root / "symlinked-entry"
+    symlinked.symlink_to(
+        destination,
+        target_is_directory=True,
+    )
+
+    entries = discover_verified_cache(verified_root)
+
+    assert len(entries) == 1
+    assert entries[0].path == str(destination.resolve())
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "policy.json",
+        "manifest.json",
+        "verification.json",
+    ],
+)
+def test_cache_inspection_rejects_symlinked_artifact(
+    tmp_path,
+    filename,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    artifact = destination / filename
+    outside = tmp_path / f"outside-{filename}"
+    outside.write_bytes(artifact.read_bytes())
+
+    artifact.unlink()
+    artifact.symlink_to(outside)
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="symbolic link",
+    ):
+        discover_verified_cache(destination.parent)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "policy.json",
+        "manifest.json",
+        "verification.json",
+    ],
+)
+def test_cache_inspection_rejects_non_regular_artifact(
+    tmp_path,
+    filename,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    artifact = destination / filename
+    artifact.unlink()
+    artifact.mkdir()
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="not a regular file|missing or cannot be resolved",
+    ):
+        discover_verified_cache(destination.parent)
+
+
+def test_activation_rejects_symlinked_policy_before_authoritative_activation(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        trust_path,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    policy = destination / "policy.json"
+    outside = tmp_path / "outside-policy.json"
+    outside.write_bytes(policy.read_bytes())
+
+    policy.unlink()
+    policy.symlink_to(outside)
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="symbolic link",
+    ):
+        activate_cached_intelligence(
+            cache_directory=destination,
+            trust_store_path=trust_path,
+            lifecycle_state_path=(tmp_path / "lifecycle.json"),
+            now=NOW,
+        )
+
+
+def test_promotion_rejects_existing_symlinked_policy_artifact(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        _,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    policy = destination / "policy.json"
+    outside = tmp_path / "outside-policy.json"
+    outside.write_bytes(policy.read_bytes())
+
+    policy.unlink()
+    policy.symlink_to(outside)
+
+    with pytest.raises(
+        IntelligenceUpdatePromotionError,
+        match="artifacts must not be symbolic links",
+    ):
+        create_cached_entry(
+            tmp_path,
+            generation=5,
+        )

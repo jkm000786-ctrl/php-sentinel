@@ -888,11 +888,16 @@ def promote_verified_candidate(
 
         existing_policy = resolved_final / VERIFIED_POLICY_FILENAME
 
-        existing_manifest = final_directory / VERIFIED_MANIFEST_FILENAME
+        existing_manifest = resolved_final / VERIFIED_MANIFEST_FILENAME
+
+        if existing_policy.is_symlink() or existing_manifest.is_symlink():
+            raise IntelligenceUpdatePromotionError(
+                "Existing verified cache artifacts must not be symbolic links."
+            )
 
         if (
-            existing_policy.exists()
-            and existing_manifest.exists()
+            existing_policy.is_file()
+            and existing_manifest.is_file()
             and existing_policy.read_bytes() == policy_bytes
             and existing_manifest.read_bytes() == manifest_bytes
         ):
@@ -945,10 +950,46 @@ def promote_verified_candidate(
     return final_directory
 
 
+def _validated_cache_artifact(
+    *,
+    directory: Path,
+    filename: str,
+) -> Path:
+    path = directory / filename
+
+    if path.is_symlink():
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache artifact must not be a symbolic link: {path}."
+        )
+
+    try:
+        resolved_directory = directory.resolve(strict=True)
+        resolved_path = path.resolve(strict=True)
+    except OSError as exc:
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache artifact is missing or cannot be resolved: {path}."
+        ) from exc
+
+    if resolved_path.parent != resolved_directory:
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache artifact escaped its cache entry: {path}."
+        )
+
+    if not resolved_path.is_file():
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache artifact is not a regular file: {path}."
+        )
+
+    return resolved_path
+
+
 def _load_verification_metadata(
     cache_directory: Path,
 ) -> IntelligenceUpdateVerificationMetadata:
-    path = cache_directory / VERIFICATION_METADATA_FILENAME
+    path = _validated_cache_artifact(
+        directory=cache_directory,
+        filename=VERIFICATION_METADATA_FILENAME,
+    )
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -982,14 +1023,32 @@ def inspect_verified_cache_entry(
 
     directory = Path(cache_directory)
 
+    if directory.is_symlink():
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache entry must not be a symbolic link: {directory}."
+        )
+
     if not directory.is_dir():
         raise IntelligenceVerifiedCacheError(
             f"Verified cache entry is not a directory: {directory}."
         )
 
-    policy_path = directory / VERIFIED_POLICY_FILENAME
+    try:
+        directory = directory.resolve(strict=True)
+    except OSError as exc:
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache entry cannot be resolved: {directory}."
+        ) from exc
 
-    manifest_path = directory / VERIFIED_MANIFEST_FILENAME
+    policy_path = _validated_cache_artifact(
+        directory=directory,
+        filename=VERIFIED_POLICY_FILENAME,
+    )
+
+    manifest_path = _validated_cache_artifact(
+        directory=directory,
+        filename=VERIFIED_MANIFEST_FILENAME,
+    )
 
     try:
         policy_bytes = policy_path.read_bytes()
@@ -1088,7 +1147,11 @@ def discover_verified_cache(
     entries: list[IntelligenceVerifiedCacheEntry] = []
 
     for directory in sorted(
-        (item for item in root.iterdir() if (item.is_dir() and not item.name.startswith("."))),
+        (
+            item
+            for item in root.iterdir()
+            if (not item.is_symlink() and item.is_dir() and not item.name.startswith("."))
+        ),
         key=lambda item: item.name,
     ):
         entry = inspect_verified_cache_entry(directory)
