@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from php_sentinel.intelligence.cve_database import OCT_2026_CRITICAL
+from php_sentinel.intelligence.repository import default_policy
 from php_sentinel.models.fingerprint import SAPIHypothesis
 
 
@@ -38,23 +39,19 @@ def evaluate_oct_2026_applicability(
             ("Detected upstream PHP version meets the fixed threshold.",),
         )
 
+    policy = default_policy()
     priority = "unknown"
     reasons = ["PHP web-serving installations are in the advisory exposure class."]
 
-    if sapi == SAPIHypothesis.MOD_PHP:
+    if sapi.value in policy.sapi_priority.critical:
         priority = "highest"
         reasons.append(
-            "Apache mod_php is identified by PHP upstream as the highest-risk deployment class."
+            f"{sapi.value} is in the policy's highest-risk web-serving deployment class."
         )
-    elif sapi in {
-        SAPIHypothesis.FPM_FASTCGI,
-        SAPIHypothesis.CGI,
-        SAPIHypothesis.FRANKENPHP,
-        SAPIHypothesis.LITESPEED,
-    }:
+    elif sapi.value in policy.sapi_priority.high:
         priority = "high"
         reasons.append(
-            f"{sapi.value} is included in the PHP upstream affected web-serving deployment classes."
+            f"{sapi.value} is included in the policy's affected web-serving deployment classes."
         )
     else:
         priority = "undetermined"

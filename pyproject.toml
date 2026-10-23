@@ -27,9 +27,14 @@ php-sentinel = "php_sentinel.cli:app"
 php-sentinel-matrix = "php_sentinel.matrix_cli:cli"
 php-sentinel-cve = "php_sentinel.cve_cli:cli"
 php-sentinel-compare = "php_sentinel.compare_cli:cli"
+php-sentinel-intel = "php_sentinel.intelligence_cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+
+[tool.setuptools.package-data]
+php_sentinel = ["data/intelligence/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

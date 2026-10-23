@@ -1,5 +1,9 @@
 from dataclasses import dataclass
 
+from php_sentinel.intelligence.repository import (
+    default_policy,
+)
+
 
 @dataclass(frozen=True)
 class PHPAdvisory:
@@ -7,20 +11,19 @@ class PHPAdvisory:
     description: str
 
 
-OCT_2026_CRITICAL = (
+_POLICY = default_policy()
+
+
+OCT_2026_CRITICAL = tuple(
     PHPAdvisory(
-        cve="CVE-2026-109618",
-        description="Critical PHP request-processing memory-corruption issue.",
-    ),
-    PHPAdvisory(
-        cve="CVE-2026-109619",
-        description="Critical PHP stale request-state issue.",
-    ),
+        cve=item.cve_id,
+        description=item.description,
+    )
+    for item in _POLICY.cves
 )
 
+
 FIXED_UPSTREAM = {
-    (8, 5): (8, 5, 12),
-    (8, 4): (8, 4, 27),
-    (8, 3): (8, 3, 36),
-    (8, 2): (8, 2, 35),
+    tuple(int(part) for part in branch.split(".")): tuple(int(part) for part in version.split("."))
+    for branch, version in _POLICY.fixed_versions.items()
 }

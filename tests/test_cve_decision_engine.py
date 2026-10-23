@@ -115,3 +115,25 @@ def test_109619_contains_session_upload_advisory():
     text = " ".join(decision.remediation)
 
     assert "session.upload_progress.enabled=0" in text
+
+
+def test_decision_engine_accepts_policy_injection():
+    from php_sentinel.intelligence.repository import (
+        default_policy,
+    )
+
+    policy = default_policy().model_copy(deep=True)
+
+    policy.fixed_versions["8.5"] = "8.5.13"
+
+    report = decide_cves(
+        php_detected=True,
+        php_version="8.5.12",
+        vendor_family="upstream",
+        sapi_hypothesis="mod_php",
+        policy=policy,
+    )
+
+    assert statuses(report) == {"potentially_affected"}
+
+    assert all(item.fixed_version == "8.5.13" for item in report.decisions)

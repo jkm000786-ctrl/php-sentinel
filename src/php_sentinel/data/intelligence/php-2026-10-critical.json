@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "policy_id": "php-2026-10-critical",
+  "product": "PHP",
+  "published_date": "2026-10-23",
+  "source": {
+    "publisher": "PHP",
+    "kind": "upstream-security-advisory",
+    "reference": "October 2026 critical PHP security releases"
+  },
+  "fixed_versions": {
+    "8.5": "8.5.12",
+    "8.4": "8.4.27",
+    "8.3": "8.3.36",
+    "8.2": "8.2.35"
+  },
+  "sapi_priority": {
+    "critical": [
+      "mod_php"
+    ],
+    "high": [
+      "fpm_fastcgi",
+      "cgi",
+      "litespeed",
+      "frankenphp"
+    ],
+    "unknown_priority": "elevated",
+    "other_priority": "unknown"
+  },
+  "guidance": {
+    "upgrade_template": "Upgrade to PHP {fixed_version} or a later supported release.",
+    "supported_branch_upgrade": "Move to a currently supported PHP branch and apply the latest security release.",
+    "patched_upstream": "Maintain current security patching and monitor future PHP advisories.",
+    "patched_vendor": "Maintain the vendor-supported package and preserve the advisory/package evidence establishing the backport."
+  },
+  "cves": [
+    {
+      "cve_id": "CVE-2026-109618",
+      "title": "RCE via out-of-memory state corruption",
+      "description": "Critical PHP request-processing memory-corruption issue.",
+      "severity": "critical",
+      "affected_sapis": [
+        "mod_php",
+        "fpm_fastcgi",
+        "cgi",
+        "litespeed",
+        "frankenphp"
+      ],
+      "temporary_mitigations": []
+    },
+    {
+      "cve_id": "CVE-2026-109619",
+      "title": "RCE via stale global request state",
+      "description": "Critical PHP stale request-state issue.",
+      "severity": "critical",
+      "affected_sapis": [
+        "mod_php",
+        "fpm_fastcgi",
+        "cgi",
+        "litespeed",
+        "frankenphp"
+      ],
+      "temporary_mitigations": [
+        "Until PHP's next regular bugfix release, consider setting session.upload_progress.enabled=0 in accordance with the 23 October 2026 PHP informational advisory."
+      ]
+    }
+  ],
+  "notes": [
+    "CVE decisions are evidence-based applicability assessments, not exploit confirmations.",
+    "A potentially_affected result means the modeled preconditions are present; it does not prove successful exploitation.",
+    "Vendor/LTS packages may contain security backports without changing the upstream-looking PHP version."
+  ]
+}

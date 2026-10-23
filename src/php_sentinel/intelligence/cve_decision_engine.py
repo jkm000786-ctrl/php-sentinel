@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from packaging.version import (
+    InvalidVersion,
+    Version,
+)
 
-from packaging.version import InvalidVersion, Version
-
+from php_sentinel.intelligence.repository import (
+    default_policy,
+    fixed_version_for_branch,
+)
 from php_sentinel.models.cve_decision import (
     CVEDecision,
     CVEDecisionReport,
@@ -11,91 +16,74 @@ from php_sentinel.models.cve_decision import (
     DecisionConfidence,
     ExposurePriority,
 )
-
-
-@dataclass(frozen=True)
-class CVEDefinition:
-    cve_id: str
-    title: str
-
-
-CVE_DEFINITIONS = (
-    CVEDefinition(
-        cve_id="CVE-2026-109618",
-        title="RCE via out-of-memory state corruption",
-    ),
-    CVEDefinition(
-        cve_id="CVE-2026-109619",
-        title="RCE via stale global request state",
-    ),
+from php_sentinel.models.intelligence_policy import (
+    CVEPolicy,
+    IntelligencePolicy,
 )
 
-
-FIXED_VERSIONS: dict[tuple[int, int], Version] = {
-    (8, 5): Version("8.5.12"),
-    (8, 4): Version("8.4.27"),
-    (8, 3): Version("8.3.36"),
-    (8, 2): Version("8.2.35"),
-}
+_POLICY = default_policy()
 
 
-WEB_SAPIS = {
-    "mod_php",
-    "fpm_fastcgi",
-    "cgi",
-    "litespeed",
-    "frankenphp",
-}
+def _priority_from_name(
+    value: str,
+) -> ExposurePriority:
+    try:
+        return ExposurePriority(value)
+    except ValueError:
+        return ExposurePriority.UNKNOWN
 
 
-def _priority(sapi: str | None) -> ExposurePriority:
+def _priority(
+    sapi: str | None,
+    *,
+    policy: IntelligencePolicy = _POLICY,
+) -> ExposurePriority:
     normalized = (sapi or "").strip().lower()
 
-    if normalized == "mod_php":
+    if normalized in policy.sapi_priority.critical:
         return ExposurePriority.CRITICAL
 
-    if normalized in WEB_SAPIS:
+    if normalized in policy.sapi_priority.high:
         return ExposurePriority.HIGH
 
     if not normalized or normalized == "unknown":
-        return ExposurePriority.ELEVATED
+        return _priority_from_name(policy.sapi_priority.unknown_priority)
 
-    return ExposurePriority.UNKNOWN
+    return _priority_from_name(policy.sapi_priority.other_priority)
 
 
 def _remediation(
-    cve_id: str,
+    definition: CVEPolicy,
     fixed_version: str | None,
+    *,
+    policy: IntelligencePolicy = _POLICY,
 ) -> list[str]:
     items: list[str] = []
 
     if fixed_version:
-        items.append(f"Upgrade to PHP {fixed_version} or a later supported release.")
+        items.append(policy.guidance.upgrade_template.format(fixed_version=fixed_version))
     else:
-        items.append(
-            "Move to a currently supported PHP branch and apply the latest security release."
-        )
+        items.append(policy.guidance.supported_branch_upgrade)
 
-    if cve_id == "CVE-2026-109619":
-        items.append(
-            "Until PHP's next regular bugfix release, consider setting "
-            "session.upload_progress.enabled=0 in accordance with the "
-            "23 October 2026 PHP informational advisory."
-        )
+    items.extend(definition.temporary_mitigations)
 
     return items
 
 
 def _decision_for_cve(
-    definition: CVEDefinition,
+    definition: CVEPolicy,
     *,
     php_detected: bool,
     php_version: str | None,
     vendor_family: str | None,
     backport_status: str | None,
     sapi_hypothesis: str | None,
+    policy: IntelligencePolicy = _POLICY,
 ) -> CVEDecision:
-    priority = _priority(sapi_hypothesis)
+    priority = _priority(
+        sapi_hypothesis,
+        policy=policy,
+    )
 
     if not php_detected:
         return CVEDecision(
@@ -104,7 +92,7 @@ def _decision_for_cve(
             status=CVEDecisionStatus.NOT_APPLICABLE,
             confidence=DecisionConfidence.HIGH,
             exposure_priority=ExposurePriority.NONE,
-            rationale=["PHP was not detected in the supplied evidence."],
+            rationale=[("PHP was not detected in the supplied evidence.")],
         )
 
     if not php_version:
@@ -116,8 +104,9 @@ def _decision_for_cve(
             exposure_priority=priority,
             rationale=[("PHP was detected but no reliable PHP version was established.")],
             remediation=_remediation(
-                definition.cve_id,
+                definition,
                 None,
+                policy=policy,
             ),
         )
 
@@ -131,37 +120,48 @@ def _decision_for_cve(
             confidence=DecisionConfidence.LOW,
             exposure_priority=priority,
             detected_version=php_version,
-            rationale=["The detected PHP version could not be parsed reliably."],
+            rationale=[("The detected PHP version could not be parsed reliably.")],
             remediation=_remediation(
-                definition.cve_id,
+                definition,
                 None,
+                policy=policy,
             ),
         )
 
     branch = version.release[:2]
-    fixed = FIXED_VERSIONS.get(branch)
+
+    if len(branch) != 2:
+        fixed = None
+    else:
+        fixed = fixed_version_for_branch(
+            (branch[0], branch[1]),
+            policy=policy,
+        )
 
     if fixed is None:
         return CVEDecision(
             cve_id=definition.cve_id,
             title=definition.title,
-            status=CVEDecisionStatus.NEEDS_VENDOR_EVIDENCE,
+            status=(CVEDecisionStatus.NEEDS_VENDOR_EVIDENCE),
             confidence=DecisionConfidence.MEDIUM,
             exposure_priority=priority,
             detected_version=str(version),
             rationale=[
                 (
-                    "The detected PHP branch is outside the explicitly "
-                    "modeled upstream 8.2-8.5 security-release matrix."
+                    "The detected PHP branch is outside "
+                    "the explicitly modeled upstream "
+                    "security-release matrix."
                 ),
                 (
-                    "Do not infer CVE status solely from the banner for "
-                    "an unmodeled or vendor-maintained branch."
+                    "Do not infer CVE status solely from "
+                    "the banner for an unmodeled or "
+                    "vendor-maintained branch."
                 ),
             ],
             remediation=_remediation(
-                definition.cve_id,
+                definition,
                 None,
+                policy=policy,
             ),
         )
 
@@ -177,7 +177,7 @@ def _decision_for_cve(
             detected_version=str(version),
             fixed_version=fixed_string,
             rationale=[(f"PHP {version} meets or exceeds the upstream fixed threshold {fixed}.")],
-            remediation=[("Maintain current security patching and monitor future PHP advisories.")],
+            remediation=[policy.guidance.patched_upstream],
         )
 
     normalized_backport = (backport_status or "unknown").strip().lower()
@@ -195,37 +195,35 @@ def _decision_for_cve(
             fixed_version=fixed_string,
             rationale=[
                 (
-                    f"PHP {version} is below upstream threshold {fixed}, "
-                    "but authoritative vendor evidence confirms the fix "
+                    f"PHP {version} is below upstream "
+                    f"threshold {fixed}, but authoritative "
+                    "vendor evidence confirms the fix "
                     "was backported."
                 )
             ],
-            remediation=[
-                (
-                    "Maintain the vendor-supported package and preserve the "
-                    "advisory/package evidence establishing the backport."
-                )
-            ],
+            remediation=[policy.guidance.patched_vendor],
         )
 
     if normalized_backport == "probably_fixed":
         return CVEDecision(
             cve_id=definition.cve_id,
             title=definition.title,
-            status=CVEDecisionStatus.NEEDS_VENDOR_EVIDENCE,
+            status=(CVEDecisionStatus.NEEDS_VENDOR_EVIDENCE),
             confidence=DecisionConfidence.MEDIUM,
             exposure_priority=priority,
             detected_version=str(version),
             fixed_version=fixed_string,
             rationale=[
                 (
-                    "Available evidence suggests a vendor backport may "
-                    "exist, but it has not been confirmed."
+                    "Available evidence suggests a vendor "
+                    "backport may exist, but it has not "
+                    "been confirmed."
                 )
             ],
             remediation=_remediation(
-                definition.cve_id,
+                definition,
                 fixed_string,
+                policy=policy,
             ),
         )
 
@@ -234,36 +232,41 @@ def _decision_for_cve(
 
         if normalized_vendor == "upstream":
             rationale.append(
-                "The runtime is identified as an upstream PHP build, "
-                "so vendor backport ambiguity does not apply."
+                "The runtime is identified as an "
+                "upstream PHP build, so vendor "
+                "backport ambiguity does not apply."
             )
         else:
             rationale.append(
-                "No vendor fix evidence was supplied; absence of such "
-                "evidence is not itself proof of exploitation."
+                "No vendor fix evidence was supplied; "
+                "absence of such evidence is not itself "
+                "proof of exploitation."
             )
 
         return CVEDecision(
             cve_id=definition.cve_id,
             title=definition.title,
-            status=CVEDecisionStatus.POTENTIALLY_AFFECTED,
-            confidence=DecisionConfidence.HIGH
-            if normalized_vendor == "upstream"
-            else DecisionConfidence.MEDIUM,
+            status=(CVEDecisionStatus.POTENTIALLY_AFFECTED),
+            confidence=(
+                DecisionConfidence.HIGH
+                if normalized_vendor == "upstream"
+                else DecisionConfidence.MEDIUM
+            ),
             exposure_priority=priority,
             detected_version=str(version),
             fixed_version=fixed_string,
             rationale=rationale,
             remediation=_remediation(
-                definition.cve_id,
+                definition,
                 fixed_string,
+                policy=policy,
             ),
         )
 
     return CVEDecision(
         cve_id=definition.cve_id,
         title=definition.title,
-        status=CVEDecisionStatus.NEEDS_VENDOR_EVIDENCE,
+        status=(CVEDecisionStatus.NEEDS_VENDOR_EVIDENCE),
         confidence=DecisionConfidence.MEDIUM,
         exposure_priority=priority,
         detected_version=str(version),
@@ -271,13 +274,15 @@ def _decision_for_cve(
         rationale=[
             (f"PHP {version} is below the upstream fixed threshold {fixed}."),
             (
-                "The package vendor/backport state is unresolved, so "
-                "the banner alone cannot establish vulnerability."
+                "The package vendor/backport state is "
+                "unresolved, so the banner alone cannot "
+                "establish vulnerability."
             ),
         ],
         remediation=_remediation(
-            definition.cve_id,
+            definition,
             fixed_string,
+            policy=policy,
         ),
     )
 
@@ -289,7 +294,10 @@ def decide_cves(
     vendor_family: str | None = None,
     backport_status: str | None = None,
     sapi_hypothesis: str | None = None,
+    policy: IntelligencePolicy | None = None,
 ) -> CVEDecisionReport:
+    selected = policy or _POLICY
+
     decisions = [
         _decision_for_cve(
             definition,
@@ -298,8 +306,9 @@ def decide_cves(
             vendor_family=vendor_family,
             backport_status=backport_status,
             sapi_hypothesis=sapi_hypothesis,
+            policy=selected,
         )
-        for definition in CVE_DEFINITIONS
+        for definition in selected.cves
     ]
 
     return CVEDecisionReport(
@@ -309,19 +318,5 @@ def decide_cves(
         backport_status=backport_status,
         sapi_hypothesis=sapi_hypothesis,
         decisions=decisions,
-        notes=[
-            (
-                "CVE decisions are evidence-based applicability "
-                "assessments, not exploit confirmations."
-            ),
-            (
-                "A potentially_affected result means the modeled "
-                "preconditions are present; it does not prove successful "
-                "exploitation."
-            ),
-            (
-                "Vendor/LTS packages may contain security backports "
-                "without changing the upstream-looking PHP version."
-            ),
-        ],
+        notes=list(selected.notes),
     )
