@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from php_sentinel.models.assessment import Assessment
 from php_sentinel.models.cve_decision import CVEDecisionReport
 from php_sentinel.models.finding import Finding
+from php_sentinel.models.provenance import EvidenceProvenance
 from php_sentinel.models.validation import ValidationReport
 
 
@@ -29,5 +30,6 @@ class UnifiedAssessmentReport(BaseModel):
     assessment: Assessment
     cve_decisions: CVEDecisionReport
     findings: list[Finding] = Field(default_factory=list)
+    provenance: EvidenceProvenance
     lab_validation: ValidationReport | None = None
     notes: list[str] = Field(default_factory=list)

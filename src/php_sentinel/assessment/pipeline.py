@@ -4,6 +4,7 @@ import hashlib
 
 from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.finding_engine import build_findings
+from php_sentinel.evidence.provenance import build_provenance
 from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.cve_decision_engine import decide_cves
 from php_sentinel.models.unified import (
@@ -109,12 +110,34 @@ def run_unified_assessment(
         cve_report=cve_report,
     )
 
+    canonical_payload = {
+        "target": target,
+        "http": metadata.model_dump(mode="json"),
+        "assessment": assessment.model_dump(mode="json"),
+        "cve_decisions": cve_report.model_dump(mode="json"),
+        "findings": [finding.model_dump(mode="json") for finding in findings],
+    }
+
+    target_identity_payload = {
+        "requested_url": metadata.requested_url,
+        "final_url": metadata.final_url,
+        "server": metadata.server,
+        "php_version": assessment.php_version,
+        "body_sha256": metadata.body_sha256,
+    }
+
+    provenance = build_provenance(
+        canonical_payload=canonical_payload,
+        target_identity_payload=(target_identity_payload),
+    )
+
     return UnifiedAssessmentReport(
         target=target,
         http=metadata,
         assessment=assessment,
         cve_decisions=cve_report,
         findings=findings,
+        provenance=provenance,
         lab_validation=lab_validation,
         notes=[
             (

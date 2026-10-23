@@ -105,3 +105,21 @@ def test_upstream_candidate_has_no_backport_contradiction(mock_fetch):
 
     assert "vendor backport ambiguity" in rationale
     assert "vendor may have backported" not in rationale
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_unified_report_contains_provenance(mock_fetch):
+    mock_fetch.return_value = response(
+        "8.5.11",
+        "candidate",
+    )
+
+    report = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    assert report.provenance.report_id
+    assert report.provenance.tool_name == "PHP Sentinel"
+    assert len(report.provenance.canonical_sha256) == 64
+    assert len(report.provenance.target_identity_sha256) == 64
