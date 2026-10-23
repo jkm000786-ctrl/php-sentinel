@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from importlib import resources
@@ -14,11 +15,58 @@ from php_sentinel.models.intelligence_policy import (
 
 DEFAULT_POLICY_RESOURCE = "data/intelligence/php-2026-10-critical.json"
 
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
+
 
 def _read_default_policy() -> str:
     resource = resources.files("php_sentinel").joinpath(DEFAULT_POLICY_RESOURCE)
 
     return resource.read_text(encoding="utf-8")
+
+
+def canonical_policy_bytes(
+    policy: IntelligencePolicy,
+) -> bytes:
+    payload = policy.model_dump(mode="json")
+
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def policy_sha256(
+    policy: IntelligencePolicy,
+) -> str:
+    return hashlib.sha256(canonical_policy_bytes(policy)).hexdigest()
+
+
+def policy_identity(
+    policy: IntelligencePolicy,
+) -> dict[str, str | int]:
+    return {
+        "policy_id": policy.policy_id,
+        "schema_version": policy.schema_version,
+        "published_date": str(policy.published_date),
+        "sha256": policy_sha256(policy),
+    }
+
+
+def _validate_supported_schema(
+    policy: IntelligencePolicy,
+) -> IntelligencePolicy:
+    if policy.schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(str(item) for item in sorted(SUPPORTED_SCHEMA_VERSIONS))
+
+        raise ValueError(
+            "Unsupported intelligence policy "
+            f"schema_version={policy.schema_version}. "
+            f"Supported schema versions: {supported}."
+        )
+
+    return policy
 
 
 def load_policy(
@@ -31,7 +79,9 @@ def load_policy(
 
     data = json.loads(raw)
 
-    return IntelligencePolicy.model_validate(data)
+    policy = IntelligencePolicy.model_validate(data)
+
+    return _validate_supported_schema(policy)
 
 
 @lru_cache(maxsize=1)

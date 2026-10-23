@@ -98,8 +98,20 @@ def compare_reports(
 
     same_requested_target = before.http.requested_url == after.http.requested_url
 
+    before_intelligence_sha = before.provenance.intelligence_sha256
+    after_intelligence_sha = after.provenance.intelligence_sha256
+
+    if before_intelligence_sha is None and after_intelligence_sha is None:
+        same_intelligence_policy = None
+    elif before_intelligence_sha is not None and after_intelligence_sha is not None:
+        same_intelligence_policy = before_intelligence_sha == after_intelligence_sha
+    else:
+        same_intelligence_policy = False
+
     if not same_requested_target and not allow_cross_target:
         overall = ComparisonState.INCOMPARABLE
+    elif same_intelligence_policy is False:
+        overall = ComparisonState.POLICY_CHANGED
 
     same_target_identity = (
         before.provenance.target_identity_sha256 == after.provenance.target_identity_sha256
@@ -145,10 +157,24 @@ def compare_reports(
 
     if not same_policy_version:
         changes.append(
-            "Policy version changed: "
+            "Decision policy version changed: "
             f"{before.provenance.policy_version} "
             "-> "
             f"{after.provenance.policy_version}."
+        )
+
+    if same_intelligence_policy is False:
+        changes.append(
+            "Intelligence policy changed: "
+            f"{before.provenance.intelligence_policy_id or 'legacy/unknown'} "
+            f"({before_intelligence_sha or 'unknown'}) -> "
+            f"{after.provenance.intelligence_policy_id or 'legacy/unknown'} "
+            f"({after_intelligence_sha or 'unknown'})."
+        )
+        changes.append(
+            "Overall remediation/regression classification "
+            "was suppressed because materially different "
+            "intelligence policies produced the reports."
         )
 
     if not same_requested_target:
@@ -174,6 +200,11 @@ def compare_reports(
         same_target_identity=same_target_identity,
         same_policy_version=same_policy_version,
         same_canonical_evidence=same_canonical_evidence,
+        same_intelligence_policy=same_intelligence_policy,
+        intelligence_policy_before=(before.provenance.intelligence_policy_id),
+        intelligence_policy_after=(after.provenance.intelligence_policy_id),
+        intelligence_sha256_before=(before_intelligence_sha),
+        intelligence_sha256_after=(after_intelligence_sha),
         php_version_before=before.assessment.php_version,
         php_version_after=after.assessment.php_version,
         assessment_before=before.assessment.status.value,

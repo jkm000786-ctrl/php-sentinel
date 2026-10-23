@@ -91,3 +91,50 @@ def test_policy_rejects_duplicate_cves(
 
     with pytest.raises(ValidationError):
         load_policy(path)
+
+
+def test_policy_hash_is_deterministic():
+    from php_sentinel.intelligence.repository import (
+        policy_sha256,
+    )
+
+    first = default_policy()
+    second = default_policy().model_copy(deep=True)
+
+    assert policy_sha256(first) == policy_sha256(second)
+
+    assert len(policy_sha256(first)) == 64
+
+
+def test_material_policy_change_changes_hash():
+    from php_sentinel.intelligence.repository import (
+        policy_sha256,
+    )
+
+    first = default_policy()
+    second = first.model_copy(deep=True)
+
+    second.fixed_versions["8.5"] = "8.5.13"
+
+    assert policy_sha256(first) != policy_sha256(second)
+
+
+def test_unsupported_schema_fails_closed(
+    tmp_path,
+):
+    policy = default_policy().model_dump(mode="json")
+
+    policy["schema_version"] = 999
+
+    path = tmp_path / "unsupported-policy.json"
+
+    path.write_text(
+        json.dumps(policy),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Unsupported intelligence policy",
+    ):
+        load_policy(path)

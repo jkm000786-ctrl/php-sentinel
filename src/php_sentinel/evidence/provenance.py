@@ -2,10 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import (
+    PackageNotFoundError,
+    version,
+)
 from uuid import uuid4
 
-from php_sentinel.models.provenance import EvidenceProvenance
+from php_sentinel.intelligence.repository import (
+    default_policy,
+    policy_identity,
+)
+from php_sentinel.models.intelligence_policy import (
+    IntelligencePolicy,
+)
+from php_sentinel.models.provenance import (
+    EvidenceProvenance,
+)
 
 POLICY_VERSION = "2026-10-23.1"
 
@@ -41,7 +53,9 @@ def _stable_payload(value):
     return value
 
 
-def _canonical_json(payload: dict) -> bytes:
+def _canonical_json(
+    payload: dict,
+) -> bytes:
     stable = _stable_payload(payload)
 
     return json.dumps(
@@ -53,7 +67,9 @@ def _canonical_json(payload: dict) -> bytes:
     ).encode("utf-8")
 
 
-def sha256_payload(payload: dict) -> str:
+def sha256_payload(
+    payload: dict,
+) -> str:
     return hashlib.sha256(_canonical_json(payload)).hexdigest()
 
 
@@ -61,12 +77,21 @@ def build_provenance(
     *,
     canonical_payload: dict,
     target_identity_payload: dict,
+    intelligence_policy: (IntelligencePolicy | None) = None,
 ) -> EvidenceProvenance:
+    selected_policy = intelligence_policy or default_policy()
+
+    identity = policy_identity(selected_policy)
+
     return EvidenceProvenance(
         report_id=str(uuid4()),
         tool_name="PHP Sentinel",
         tool_version=tool_version(),
         policy_version=POLICY_VERSION,
         canonical_sha256=sha256_payload(canonical_payload),
-        target_identity_sha256=sha256_payload(target_identity_payload),
+        target_identity_sha256=(sha256_payload(target_identity_payload)),
+        intelligence_policy_id=str(identity["policy_id"]),
+        intelligence_schema_version=int(identity["schema_version"]),
+        intelligence_published_date=str(identity["published_date"]),
+        intelligence_sha256=str(identity["sha256"]),
     )

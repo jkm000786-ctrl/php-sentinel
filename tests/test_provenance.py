@@ -106,3 +106,51 @@ def test_material_evidence_change_still_changes_hash():
     )
 
     assert first != second
+
+
+def test_provenance_contains_intelligence_identity():
+    from php_sentinel.intelligence.repository import (
+        default_policy,
+        policy_sha256,
+    )
+
+    policy = default_policy()
+
+    provenance = build_provenance(
+        canonical_payload={
+            "target": "http://127.0.0.1/",
+        },
+        target_identity_payload={
+            "target": "http://127.0.0.1/",
+        },
+        intelligence_policy=policy,
+    )
+
+    assert provenance.intelligence_policy_id == policy.policy_id
+
+    assert provenance.intelligence_schema_version == policy.schema_version
+
+    assert provenance.intelligence_sha256 == policy_sha256(policy)
+
+    assert provenance.intelligence_sha256 is not None
+
+    assert len(provenance.intelligence_sha256) == 64
+
+
+def test_legacy_provenance_without_intelligence_fields_loads():
+    from php_sentinel.models.provenance import (
+        EvidenceProvenance,
+    )
+
+    provenance = EvidenceProvenance(
+        report_id="legacy-report",
+        tool_name="PHP Sentinel",
+        tool_version="0.1.0",
+        policy_version="2026-10-23.1",
+        canonical_sha256="a" * 64,
+        target_identity_sha256="b" * 64,
+    )
+
+    assert provenance.intelligence_policy_id is None
+
+    assert provenance.intelligence_sha256 is None

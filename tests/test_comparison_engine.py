@@ -170,3 +170,50 @@ def test_cross_target_override_allows_lab_comparison(
 
     assert result.same_requested_target is False
     assert result.overall_state.value == "remediated"
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_policy_change_is_explicitly_reported(
+    mock_fetch,
+):
+    from php_sentinel.intelligence.repository import (
+        default_policy,
+    )
+
+    mock_fetch.side_effect = [
+        response("8.5.12"),
+        response("8.5.12"),
+    ]
+
+    before_policy = default_policy()
+
+    after_policy = before_policy.model_copy(deep=True)
+
+    after_policy.fixed_versions["8.5"] = "8.5.13"
+
+    before = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+        intelligence_policy=before_policy,
+    )
+
+    after = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+        intelligence_policy=after_policy,
+    )
+
+    result = compare_reports(
+        before,
+        after,
+    )
+
+    assert result.same_requested_target is True
+
+    assert result.same_intelligence_policy is False
+
+    assert result.overall_state.value == "policy_changed"
+
+    text = " ".join(result.changes).lower()
+
+    assert "intelligence policy changed" in text

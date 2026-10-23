@@ -123,3 +123,38 @@ def test_unified_report_contains_provenance(mock_fetch):
     assert report.provenance.tool_name == "PHP Sentinel"
     assert len(report.provenance.canonical_sha256) == 64
     assert len(report.provenance.target_identity_sha256) == 64
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_unified_report_binds_intelligence_policy(
+    mock_fetch,
+):
+    from php_sentinel.intelligence.repository import (
+        default_policy,
+        policy_sha256,
+    )
+
+    policy = default_policy()
+
+    mock_fetch.return_value = httpx.Response(
+        200,
+        request=httpx.Request(
+            "GET",
+            "http://127.0.0.1/",
+        ),
+        headers={
+            "Server": "Apache/2.4.69 (Debian)",
+            "X-Powered-By": "PHP/8.5.12",
+        },
+        text="runtime=8.5.12",
+    )
+
+    report = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+        intelligence_policy=policy,
+    )
+
+    assert report.provenance.intelligence_policy_id == policy.policy_id
+
+    assert report.provenance.intelligence_sha256 == policy_sha256(policy)

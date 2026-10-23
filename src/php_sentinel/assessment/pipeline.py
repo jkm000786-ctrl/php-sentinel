@@ -7,6 +7,11 @@ from php_sentinel.assessment.finding_engine import build_findings
 from php_sentinel.evidence.provenance import build_provenance
 from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.cve_decision_engine import decide_cves
+from php_sentinel.intelligence.repository import (
+    default_policy,
+    policy_identity,
+)
+from php_sentinel.models.intelligence_policy import IntelligencePolicy
 from php_sentinel.models.unified import (
     HTTPMetadata,
     UnifiedAssessmentReport,
@@ -60,7 +65,10 @@ def run_unified_assessment(
     backport_status: BackportStatus = BackportStatus.UNKNOWN,
     advisory_reference: str | None = None,
     lab_validation: ValidationReport | None = None,
+    intelligence_policy: IntelligencePolicy | None = None,
 ) -> UnifiedAssessmentReport:
+    selected_policy = intelligence_policy or default_policy()
+
     vendor_evidence = build_vendor_evidence(
         vendor=vendor,
         package_name=package_name,
@@ -88,6 +96,7 @@ def run_unified_assessment(
         vendor_family=(assessment_vendor.vendor.value if assessment_vendor else None),
         backport_status=(assessment_vendor.backport_status.value if assessment_vendor else None),
         sapi_hypothesis=assessment.fingerprint.sapi.value,
+        policy=selected_policy,
     )
 
     body = response.content
@@ -110,8 +119,11 @@ def run_unified_assessment(
         cve_report=cve_report,
     )
 
+    intelligence_identity = policy_identity(selected_policy)
+
     canonical_payload = {
         "target": target,
+        "intelligence_policy": intelligence_identity,
         "http": metadata.model_dump(mode="json"),
         "assessment": assessment.model_dump(mode="json"),
         "cve_decisions": cve_report.model_dump(mode="json"),
@@ -129,6 +141,7 @@ def run_unified_assessment(
     provenance = build_provenance(
         canonical_payload=canonical_payload,
         target_identity_payload=(target_identity_payload),
+        intelligence_policy=selected_policy,
     )
 
     return UnifiedAssessmentReport(
