@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -7,12 +8,14 @@ from rich.console import Console
 from rich.table import Table
 
 from php_sentinel.assessment.exposure import assess_response
+from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.http.client import fetch
 from php_sentinel.models.vendor import (
     BackportStatus,
     VendorEvidence,
     VendorFamily,
 )
+from php_sentinel.validation.runner import run_lab_validation
 
 app = typer.Typer(
     help="PHP Sentinel — evidence-driven PHP exposure assessment.",
@@ -70,7 +73,52 @@ def analyze(
             help="Vendor security advisory or package-security reference.",
         ),
     ] = None,
+    validate_lab: Annotated[
+        bool,
+        typer.Option(
+            "--validate-lab",
+            help="Run safe loopback-only validation.",
+        ),
+    ] = False,
+    authorize_lab: Annotated[
+        bool,
+        typer.Option(
+            "--authorize-lab",
+            help="Explicitly authorize this local lab validation.",
+        ),
+    ] = False,
+    evidence_out: Annotated[
+        Path | None,
+        typer.Option(
+            "--evidence-out",
+            help="Write validation evidence to JSON.",
+        ),
+    ] = None,
 ) -> None:
+    if validate_lab:
+        validation = run_lab_validation(
+            target,
+            explicit_authorization=authorize_lab,
+            timeout=timeout,
+        )
+
+        if evidence_out:
+            path = write_json_evidence(
+                validation,
+                evidence_out,
+            )
+            console.print(f"[green]Validation evidence written:[/green] {path}")
+
+        if not validation.authorized:
+            console.print("[red]Lab validation denied by scope policy.[/red]")
+            for reason in validation.notes:
+                console.print(f" • {reason}")
+            raise typer.Exit(code=3)
+
+        console.print("[green]Safe lab validation completed.[/green]")
+        for observation in validation.observations:
+            console.print(f" • {observation.method} {observation.status_code} {observation.url}")
+
     try:
         response = fetch(target, timeout=timeout)
     except httpx.HTTPError as exc:
