@@ -133,6 +133,89 @@ class SignerDelegation(BaseModel):
         return self
 
 
+class SignerDelegationRevocation(BaseModel):
+    revocation_version: int = Field(
+        default=1,
+        ge=1,
+    )
+
+    context: str = Field(
+        pattern=r"^(intelligence|registry)$",
+    )
+
+    predecessor_signer_id: str = Field(
+        min_length=1,
+    )
+
+    successor_signer_id: str = Field(
+        min_length=1,
+    )
+
+    delegation_sequence: int = Field(
+        ge=1,
+    )
+
+    delegation_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    revocation_sequence: int = Field(
+        ge=1,
+    )
+
+    issued_at: datetime
+
+    algorithm: str = "ed25519"
+
+    signature_b64: str = Field(
+        min_length=1,
+    )
+
+    @field_validator("signature_b64")
+    @classmethod
+    def validate_revocation_signature(
+        cls,
+        value: str,
+    ) -> str:
+        return _validate_strict_base64_length(
+            value,
+            expected_length=(ED25519_SIGNATURE_BYTES),
+            field_name="signature_b64",
+        )
+
+    @model_validator(mode="after")
+    def validate_revocation(
+        self,
+    ) -> SignerDelegationRevocation:
+        if self.revocation_version != 1:
+            raise ValueError("Unsupported signer-delegation revocation version.")
+
+        if self.predecessor_signer_id == self.successor_signer_id:
+            raise ValueError("A signer cannot revoke a self-delegation.")
+
+        if self.issued_at.tzinfo is None:
+            raise ValueError("Delegation revocation issued_at requires timezone information.")
+
+        return self
+
+
+class VerifiedSignerDelegationEvidence(BaseModel):
+    predecessor_signer_id: str
+    successor_signer_id: str
+
+    sequence: int = Field(
+        ge=1,
+    )
+
+    minimum_successor_generation: int = Field(
+        ge=1,
+    )
+
+    delegation_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+
 class IntelligenceManifest(BaseModel):
     manifest_version: int = Field(
         default=3,
@@ -248,6 +331,10 @@ class TrustStore(BaseModel):
         default_factory=list,
     )
 
+    delegation_revocations: list[SignerDelegationRevocation] = Field(
+        default_factory=list,
+    )
+
     @model_validator(mode="after")
     def validate_store(
         self,
@@ -281,6 +368,20 @@ class TrustStore(BaseModel):
         if len(delegation_ids) != len(set(delegation_ids)):
             raise ValueError("Signer delegation identity tuples must be unique.")
 
+        revocation_ids = [
+            (
+                item.context,
+                item.predecessor_signer_id,
+                item.successor_signer_id,
+                item.delegation_sequence,
+                item.revocation_sequence,
+            )
+            for item in self.delegation_revocations
+        ]
+
+        if len(revocation_ids) != len(set(revocation_ids)):
+            raise ValueError("Signer delegation revocation identity tuples must be unique.")
+
         return self
 
 
@@ -301,6 +402,13 @@ class IntelligenceTrustDecision(BaseModel):
     authorized_predecessor_minimum_generations: dict[
         str,
         int,
+    ] = Field(
+        default_factory=dict,
+    )
+
+    authorized_predecessor_delegations: dict[
+        str,
+        VerifiedSignerDelegationEvidence,
     ] = Field(
         default_factory=dict,
     )

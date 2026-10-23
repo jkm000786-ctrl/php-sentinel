@@ -6,6 +6,13 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from php_sentinel.models.intelligence_lifecycle import (
+    DelegationHistoryRecord,
+)
+from php_sentinel.models.intelligence_trust import (
+    VerifiedSignerDelegationEvidence,
+)
+
 SUPPORTED_REGISTRY_MANIFEST_VERSIONS = frozenset({1})
 SUPPORTED_REGISTRY_STATE_VERSIONS = frozenset({1})
 
@@ -115,6 +122,13 @@ class SourceRegistryTrustDecision(BaseModel):
         default_factory=dict,
     )
 
+    authorized_predecessor_delegations: dict[
+        str,
+        VerifiedSignerDelegationEvidence,
+    ] = Field(
+        default_factory=dict,
+    )
+
     rationale: list[str] = Field(
         default_factory=list,
     )
@@ -147,6 +161,18 @@ class SourceRegistryLifecycleDecision(BaseModel):
     minimum_generation: int
     maximum_age_days: int
 
+    rotation_predecessor_signer_id: str | None = None
+
+    rotation_delegation_sequence: int | None = Field(
+        default=None,
+        ge=1,
+    )
+
+    rotation_delegation_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
     rationale: list[str] = Field(
         default_factory=list,
     )
@@ -175,6 +201,13 @@ class SourceRegistryStateStore(BaseModel):
     records: dict[
         str,
         SourceRegistryStateRecord,
+    ] = Field(
+        default_factory=dict,
+    )
+
+    delegation_records: dict[
+        str,
+        DelegationHistoryRecord,
     ] = Field(
         default_factory=dict,
     )

@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from php_sentinel.intelligence.delegation import (
-    resolve_authorized_predecessors,
+    resolve_authorized_predecessor_evidence,
 )
 from php_sentinel.intelligence.repository import (
     default_policy,
@@ -306,16 +306,20 @@ def verify_manifest(
     else:
         rationale.append("This is a legacy pre-domain-separation manifest signature.")
 
-    (
-        authorized_predecessors,
-        predecessor_minimum_generations,
-    ) = resolve_authorized_predecessors(
+    delegation_evidence = resolve_authorized_predecessor_evidence(
         trust_store=trust_store,
         successor_signer_id=(manifest.signer_id),
         successor_public_key_b64=(signer.public_key_b64),
         context="intelligence",
         now=now,
     )
+
+    authorized_predecessors = sorted(delegation_evidence)
+
+    predecessor_minimum_generations = {
+        predecessor_id: (evidence.minimum_successor_generation)
+        for predecessor_id, evidence in delegation_evidence.items()
+    }
 
     if signer.authorized_predecessors:
         rationale.append(
@@ -337,6 +341,7 @@ def verify_manifest(
         algorithm=manifest.algorithm,
         authorized_predecessor_signer_ids=(authorized_predecessors),
         authorized_predecessor_minimum_generations=(predecessor_minimum_generations),
+        authorized_predecessor_delegations=(delegation_evidence),
         rationale=rationale,
     )
 

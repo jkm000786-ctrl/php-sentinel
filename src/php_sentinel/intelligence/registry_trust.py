@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from php_sentinel.intelligence.delegation import (
-    resolve_authorized_predecessors,
+    resolve_authorized_predecessor_evidence,
 )
 from php_sentinel.intelligence.lifecycle import (
     lifecycle_state_lock,
@@ -28,6 +28,9 @@ from php_sentinel.intelligence.trust import load_trust_store
 from php_sentinel.intelligence.update import (
     IntelligenceVerifiedCacheError,
     activate_cached_intelligence,
+)
+from php_sentinel.models.intelligence_lifecycle import (
+    DelegationHistoryRecord,
 )
 from php_sentinel.models.intelligence_source import (
     IntelligenceSourceRegistry,
@@ -309,16 +312,20 @@ def verify_source_registry_manifest(
             rationale=["Registry Ed25519 signature verification failed."],
         )
 
-    (
-        authorized_predecessors,
-        predecessor_minimum_generations,
-    ) = resolve_authorized_predecessors(
+    delegation_evidence = resolve_authorized_predecessor_evidence(
         trust_store=trust_store,
         successor_signer_id=(manifest.signer_id),
         successor_public_key_b64=(signer.public_key_b64),
         context="registry",
         now=now,
     )
+
+    authorized_predecessors = sorted(delegation_evidence)
+
+    predecessor_minimum_generations = {
+        predecessor_id: (evidence.minimum_successor_generation)
+        for predecessor_id, evidence in delegation_evidence.items()
+    }
 
     rationale = [
         "Registry digest matches the signed manifest.",
@@ -344,6 +351,7 @@ def verify_source_registry_manifest(
         **base,
         authorized_predecessor_signer_ids=(authorized_predecessors),
         authorized_predecessor_minimum_generations=(predecessor_minimum_generations),
+        authorized_predecessor_delegations=(delegation_evidence),
         rationale=rationale,
     )
 
@@ -419,9 +427,29 @@ def evaluate_source_registry_lifecycle(
                 record.signer_id
             )
 
+            delegation_evidence = trust.authorized_predecessor_delegations.get(record.signer_id)
+
+            delegation_key = f"registry|{record.signer_id}|{trust.signer_id}"
+
+            historical_delegation = (
+                state.delegation_records.get(delegation_key) if state is not None else None
+            )
+
+            delegation_history_valid = delegation_evidence is not None
+
+            if delegation_evidence is not None and historical_delegation is not None:
+                if delegation_evidence.sequence < historical_delegation.sequence:
+                    delegation_history_valid = False
+
+                if delegation_evidence.sequence == historical_delegation.sequence and (
+                    delegation_evidence.delegation_sha256 != historical_delegation.delegation_sha256
+                ):
+                    delegation_history_valid = False
+
             rotation_authorized = (
                 record.signer_id in trust.authorized_predecessor_signer_ids
                 and delegated_minimum is not None
+                and delegation_history_valid
                 and manifest.generation >= delegated_minimum
                 and manifest.generation > record.generation
             )
@@ -462,10 +490,25 @@ def evaluate_source_registry_lifecycle(
                 ],
             )
 
+    rotation_predecessor = None
+    rotation_sequence = None
+    rotation_digest = None
+
+    if record is not None and trust.signer_id != record.signer_id:
+        selected = trust.authorized_predecessor_delegations.get(record.signer_id)
+
+        if selected is not None:
+            rotation_predecessor = record.signer_id
+            rotation_sequence = selected.sequence
+            rotation_digest = selected.delegation_sha256
+
     return SourceRegistryLifecycleDecision(
         state=SourceRegistryLifecycleState.CURRENT,
         activatable=trust.trusted,
         **base,
+        rotation_predecessor_signer_id=(rotation_predecessor),
+        rotation_delegation_sequence=(rotation_sequence),
+        rotation_delegation_sha256=(rotation_digest),
         rationale=[
             (
                 "Registry signature, freshness, expiry, generation, "
@@ -663,6 +706,36 @@ def record_accepted_source_registry(
                 )
 
         updated = current.model_copy(deep=True)
+
+        if (
+            lifecycle.rotation_predecessor_signer_id is not None
+            and lifecycle.rotation_delegation_sequence is not None
+            and lifecycle.rotation_delegation_sha256 is not None
+        ):
+            delegation_key = (
+                f"registry|{lifecycle.rotation_predecessor_signer_id}|{lifecycle.signer_id}"
+            )
+
+            historical = updated.delegation_records.get(delegation_key)
+
+            if historical is not None:
+                if lifecycle.rotation_delegation_sequence < historical.sequence:
+                    raise SourceRegistryStateStorageError(
+                        "Refusing to persist an older registry delegation sequence."
+                    )
+
+                if lifecycle.rotation_delegation_sequence == historical.sequence and (
+                    lifecycle.rotation_delegation_sha256 != historical.delegation_sha256
+                ):
+                    raise SourceRegistryStateStorageError(
+                        "Refusing same-sequence registry delegation digest replacement."
+                    )
+
+            updated.delegation_records[delegation_key] = DelegationHistoryRecord(
+                sequence=(lifecycle.rotation_delegation_sequence),
+                delegation_sha256=(lifecycle.rotation_delegation_sha256),
+                accepted_at=accepted_at,
+            )
 
         updated.records[manifest.registry_id] = SourceRegistryStateRecord(
             generation=manifest.generation,

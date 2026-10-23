@@ -12,6 +12,7 @@ from php_sentinel.intelligence.repository import (
     policy_sha256,
 )
 from php_sentinel.models.intelligence_lifecycle import (
+    DelegationHistoryRecord,
     IntelligenceLifecycleDecision,
     IntelligenceLifecyclePolicy,
     IntelligenceLifecycleState,
@@ -469,9 +470,29 @@ def evaluate_lifecycle(
                 record.signer_id
             )
 
+            delegation_evidence = trust.authorized_predecessor_delegations.get(record.signer_id)
+
+            delegation_key = f"intelligence|{record.signer_id}|{trust.signer_id}"
+
+            historical_delegation = (
+                state.delegation_records.get(delegation_key) if state is not None else None
+            )
+
+            delegation_history_valid = delegation_evidence is not None
+
+            if delegation_evidence is not None and historical_delegation is not None:
+                if delegation_evidence.sequence < historical_delegation.sequence:
+                    delegation_history_valid = False
+
+                if delegation_evidence.sequence == historical_delegation.sequence and (
+                    delegation_evidence.delegation_sha256 != historical_delegation.delegation_sha256
+                ):
+                    delegation_history_valid = False
+
             rotation_authorized = (
                 record.signer_id in trust.authorized_predecessor_signer_ids
                 and delegated_minimum is not None
+                and delegation_history_valid
                 and manifest.generation >= delegated_minimum
                 and manifest.generation > record.generation
             )
@@ -516,10 +537,25 @@ def evaluate_lifecycle(
                 ],
             )
 
+    rotation_predecessor = None
+    rotation_sequence = None
+    rotation_digest = None
+
+    if record is not None and trust.signer_id != record.signer_id:
+        selected = trust.authorized_predecessor_delegations.get(record.signer_id)
+
+        if selected is not None:
+            rotation_predecessor = record.signer_id
+            rotation_sequence = selected.sequence
+            rotation_digest = selected.delegation_sha256
+
     return IntelligenceLifecycleDecision(
         state=IntelligenceLifecycleState.CURRENT,
         activatable=True,
         **base,
+        rotation_predecessor_signer_id=(rotation_predecessor),
+        rotation_delegation_sequence=(rotation_sequence),
+        rotation_delegation_sha256=(rotation_digest),
         rationale=[
             (
                 "Manifest signature, freshness, expiry, "
@@ -569,11 +605,43 @@ def record_accepted_lifecycle(
                     "for an already recorded lifecycle generation."
                 )
 
+        accepted_at = now or datetime.now(UTC)
+
+        if (
+            lifecycle.rotation_predecessor_signer_id is not None
+            and lifecycle.rotation_delegation_sequence is not None
+            and lifecycle.rotation_delegation_sha256 is not None
+        ):
+            delegation_key = (
+                f"intelligence|{lifecycle.rotation_predecessor_signer_id}|{lifecycle.signer_id}"
+            )
+
+            historical = current_state.delegation_records.get(delegation_key)
+
+            if historical is not None:
+                if lifecycle.rotation_delegation_sequence < historical.sequence:
+                    raise LifecycleStateStorageError(
+                        "Refusing to persist an older delegation sequence."
+                    )
+
+                if lifecycle.rotation_delegation_sequence == historical.sequence and (
+                    lifecycle.rotation_delegation_sha256 != historical.delegation_sha256
+                ):
+                    raise LifecycleStateStorageError(
+                        "Refusing same-sequence delegation digest replacement."
+                    )
+
+            current_state.delegation_records[delegation_key] = DelegationHistoryRecord(
+                sequence=(lifecycle.rotation_delegation_sequence),
+                delegation_sha256=(lifecycle.rotation_delegation_sha256),
+                accepted_at=accepted_at,
+            )
+
         current_state.records[policy.policy_id] = LifecycleStateRecord(
             generation=(lifecycle.generation),
             policy_sha256=(lifecycle.policy_sha256),
             signer_id=(lifecycle.signer_id),
-            accepted_at=(now or datetime.now(UTC)),
+            accepted_at=accepted_at,
         )
 
         _save_lifecycle_state_unlocked(

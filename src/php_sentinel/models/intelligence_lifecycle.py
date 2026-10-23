@@ -53,6 +53,18 @@ class IntelligenceLifecycleDecision(BaseModel):
     minimum_generation: int | None = None
     maximum_age_days: int | None = None
 
+    rotation_predecessor_signer_id: str | None = None
+
+    rotation_delegation_sequence: int | None = Field(
+        default=None,
+        ge=1,
+    )
+
+    rotation_delegation_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
     rationale: list[str] = Field(
         default_factory=list,
     )
@@ -69,6 +81,18 @@ class LifecycleStateRecord(BaseModel):
     accepted_at: datetime
 
 
+class DelegationHistoryRecord(BaseModel):
+    sequence: int = Field(
+        ge=1,
+    )
+
+    delegation_sha256: str = Field(
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+    accepted_at: datetime
+
+
 class LifecycleStateStore(BaseModel):
     store_version: int = Field(
         default=1,
@@ -77,6 +101,13 @@ class LifecycleStateStore(BaseModel):
     records: dict[
         str,
         LifecycleStateRecord,
+    ] = Field(
+        default_factory=dict,
+    )
+
+    delegation_records: dict[
+        str,
+        DelegationHistoryRecord,
     ] = Field(
         default_factory=dict,
     )
