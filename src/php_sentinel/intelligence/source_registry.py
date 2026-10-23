@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -95,6 +96,33 @@ def _resolve_channel(
     return selected
 
 
+_STRUCTURAL_PATH_ESCAPE_RE = re.compile(
+    r"%(?:2e|2f|5c|25)",
+    re.IGNORECASE,
+)
+
+
+def _path_is_structurally_safe(
+    path: str,
+) -> bool:
+    """
+    Reject path representations whose decoding could alter hierarchy.
+
+    Encoded dot, slash, backslash, or percent bytes are rejected so nested
+    encodings cannot turn an apparently contained path into traversal.
+    """
+
+    if "\\" in path:
+        return False
+
+    if _STRUCTURAL_PATH_ESCAPE_RE.search(path):
+        return False
+
+    segments = path.split("/")
+
+    return all(segment not in {".", ".."} for segment in segments)
+
+
 def _effective_url_port(
     *,
     scheme: str,
@@ -132,15 +160,24 @@ def _url_is_within_source_base(
     if base.scheme.lower() != candidate.scheme.lower():
         return False
 
+    if "%" in (base.hostname or "") or "%" in (candidate.hostname or ""):
+        return False
+
     if (base.hostname or "").lower() != (candidate.hostname or "").lower():
+        return False
+
+    try:
+        base_port = base.port
+        candidate_port = candidate.port
+    except ValueError:
         return False
 
     if _effective_url_port(
         scheme=base.scheme.lower(),
-        port=base.port,
+        port=base_port,
     ) != _effective_url_port(
         scheme=candidate.scheme.lower(),
-        port=candidate.port,
+        port=candidate_port,
     ):
         return False
 
@@ -156,11 +193,13 @@ def _url_is_within_source_base(
         return False
 
     base_path = base.path or "/"
+    candidate_path = candidate.path or "/"
+
+    if not _path_is_structurally_safe(base_path) or not _path_is_structurally_safe(candidate_path):
+        return False
 
     if not base_path.endswith("/"):
         base_path += "/"
-
-    candidate_path = candidate.path or "/"
 
     return candidate_path.startswith(base_path)
 

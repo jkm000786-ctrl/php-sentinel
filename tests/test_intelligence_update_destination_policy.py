@@ -10,6 +10,7 @@ from php_sentinel.intelligence.update import (
     _address_is_public_update_destination,
     _resolve_remote_host_addresses,
     _validate_remote_destination,
+    _validate_remote_url,
     stage_remote_bundle,
 )
 
@@ -464,3 +465,51 @@ def test_stage_rejects_private_connected_peer(
             ),
             peer_address_getter=peer_address("10.0.0.1"),
         )
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "::ffff:127.0.0.1",
+        "::ffff:10.0.0.1",
+        "::ffff:8.8.8.8",
+        "::ffff:1.1.1.1",
+    ],
+)
+def test_destination_policy_rejects_ipv4_mapped_ipv6(
+    address,
+):
+    assert not _address_is_public_update_destination(address)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[fe80::1%25eth0]/policy.json",
+        "https://[fe80::1%eth0]/policy.json",
+    ],
+)
+def test_destination_policy_rejects_scoped_ipv6_host(
+    url,
+):
+    with pytest.raises(
+        IntelligenceUpdateTransportError,
+        match="Scoped or percent-bearing",
+    ):
+        _validate_remote_destination(url)
+
+
+def test_destination_policy_converts_malformed_port_to_transport_error():
+    with pytest.raises(
+        IntelligenceUpdateTransportError,
+        match="invalid port",
+    ):
+        _validate_remote_destination("https://updates.example.test:99999/policy.json")
+
+
+def test_remote_url_validation_rejects_malformed_port():
+    with pytest.raises(
+        IntelligenceUpdateTransportError,
+        match="invalid port",
+    ):
+        _validate_remote_url("https://updates.example.test:99999/policy.json")

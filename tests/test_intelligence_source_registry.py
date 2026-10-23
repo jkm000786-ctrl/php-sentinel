@@ -595,3 +595,53 @@ def test_url_containment_rejects_embedded_credentials():
         base_url="https://updates.example.test/intel/",
         candidate_url=("https://user:pass@updates.example.test/intel/stable/policy.json"),
     )
+
+
+@pytest.mark.parametrize(
+    "candidate_url",
+    [
+        "https://updates.example.test/intel/../admin/policy.json",
+        "https://updates.example.test/intel/%2e%2e/admin/policy.json",
+        "https://updates.example.test/intel/%2E%2E/admin/policy.json",
+        "https://updates.example.test/intel/%252e%252e/admin/policy.json",
+        "https://updates.example.test/intel/%2f..%2fadmin/policy.json",
+        "https://updates.example.test/intel/%5c..%5cadmin/policy.json",
+    ],
+)
+def test_url_containment_rejects_structural_path_ambiguity(
+    candidate_url,
+):
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=candidate_url,
+    )
+
+
+def test_url_containment_rejects_malformed_port():
+    assert not _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test:99999/intel/stable/policy.json"),
+    )
+
+
+@pytest.mark.parametrize(
+    "candidate_url",
+    [
+        "https://[fe80::1%25eth0]/intel/policy.json",
+        "https://[fe80::1%eth0]/intel/policy.json",
+    ],
+)
+def test_url_containment_rejects_scoped_host_identity(
+    candidate_url,
+):
+    assert not _url_is_within_source_base(
+        base_url="https://[fe80::1]/intel/",
+        candidate_url=candidate_url,
+    )
+
+
+def test_url_containment_allows_nonstructural_percent_encoding():
+    assert _url_is_within_source_base(
+        base_url="https://updates.example.test/intel/",
+        candidate_url=("https://updates.example.test/intel/release%20notes/policy.json"),
+    )

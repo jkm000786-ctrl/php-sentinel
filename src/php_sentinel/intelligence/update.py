@@ -156,6 +156,12 @@ def _address_is_public_update_destination(
     except ValueError as exc:
         raise IntelligenceUpdateTransportError(f"Invalid resolved IP address {address!r}.") from exc
 
+    if getattr(parsed, "ipv4_mapped", None) is not None:
+        return False
+
+    if "%" in str(parsed):
+        return False
+
     return (
         parsed.is_global
         and not parsed.is_multicast
@@ -244,6 +250,11 @@ def _validate_remote_destination(
     if not hostname:
         raise IntelligenceUpdateTransportError("Intelligence update URL must include a hostname.")
 
+    if "%" in hostname:
+        raise IntelligenceUpdateTransportError(
+            "Scoped or percent-bearing update host identities are not allowed."
+        )
+
     try:
         literal = ipaddress.ip_address(hostname)
     except ValueError:
@@ -259,7 +270,12 @@ def _validate_remote_destination(
 
         return (address,)
 
-    port = parsed.port or 443
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise IntelligenceUpdateTransportError(
+            "Intelligence update URL contains an invalid port."
+        ) from exc
 
     addresses = _resolve_remote_host_addresses(
         hostname=hostname,
@@ -289,6 +305,18 @@ def _validate_remote_url(
 
     if not parsed.hostname:
         raise IntelligenceUpdateTransportError("Intelligence update URL must include a hostname.")
+
+    if "%" in parsed.hostname:
+        raise IntelligenceUpdateTransportError(
+            "Scoped or percent-bearing update host identities are not allowed."
+        )
+
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise IntelligenceUpdateTransportError(
+            "Intelligence update URL contains an invalid port."
+        ) from exc
 
     if parsed.username is not None or parsed.password is not None:
         raise IntelligenceUpdateTransportError(
