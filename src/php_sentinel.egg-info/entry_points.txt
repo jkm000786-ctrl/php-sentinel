@@ -1,2 +1,0 @@
-[console_scripts]
-php-sentinel = php_sentinel.cli:app
