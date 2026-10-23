@@ -7,6 +7,11 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from php_sentinel.intelligence.registry_trust import (
+    SourceRegistryVerificationError,
+    activate_signed_source_registry,
+    verify_signed_source_registry,
+)
 from php_sentinel.intelligence.source_registry import (
     IntelligenceSourceRegistryError,
     activate_registry_cached_intelligence,
@@ -636,6 +641,122 @@ def source_activate(
                 "cache_entry": (entry.model_dump(mode="json")),
                 "trust": (selection.trust.model_dump(mode="json")),
                 "lifecycle": (selection.lifecycle.model_dump(mode="json")),
+            },
+            indent=2,
+        )
+    )
+
+
+@app.command("registry-verify")
+def registry_verify(
+    registry: Annotated[
+        Path,
+        typer.Option("--registry"),
+    ],
+    manifest: Annotated[
+        Path,
+        typer.Option("--registry-manifest"),
+    ],
+    trust_store: Annotated[
+        Path,
+        typer.Option("--registry-trust-store"),
+    ],
+    state: Annotated[
+        Path,
+        typer.Option("--registry-state"),
+    ],
+    minimum_generation: Annotated[
+        int,
+        typer.Option("--minimum-generation"),
+    ] = 1,
+    maximum_age_days: Annotated[
+        int,
+        typer.Option("--max-age-days"),
+    ] = 30,
+) -> None:
+    try:
+        verified = verify_signed_source_registry(
+            registry_path=registry,
+            manifest_path=manifest,
+            registry_trust_store_path=trust_store,
+            registry_state_path=state,
+            minimum_generation=minimum_generation,
+            maximum_age_days=maximum_age_days,
+        )
+
+    except (
+        SourceRegistryVerificationError,
+        OSError,
+        ValueError,
+    ) as exc:
+        console.print(f"[bold red]Registry verification failed:[/bold red] {exc}")
+        raise typer.Exit(code=10) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                "registry_sha256": (verified.trust.registry_sha256),
+                "trust": (verified.trust.model_dump(mode="json")),
+                "lifecycle": (verified.lifecycle.model_dump(mode="json")),
+            },
+            indent=2,
+        )
+    )
+
+
+@app.command("registry-activate")
+def registry_activate(
+    registry: Annotated[
+        Path,
+        typer.Option("--registry"),
+    ],
+    manifest: Annotated[
+        Path,
+        typer.Option("--registry-manifest"),
+    ],
+    trust_store: Annotated[
+        Path,
+        typer.Option("--registry-trust-store"),
+    ],
+    state: Annotated[
+        Path,
+        typer.Option("--registry-state"),
+    ],
+    minimum_generation: Annotated[
+        int,
+        typer.Option("--minimum-generation"),
+    ] = 1,
+    maximum_age_days: Annotated[
+        int,
+        typer.Option("--max-age-days"),
+    ] = 30,
+) -> None:
+    try:
+        verified = activate_signed_source_registry(
+            registry_path=registry,
+            manifest_path=manifest,
+            registry_trust_store_path=trust_store,
+            registry_state_path=state,
+            minimum_generation=minimum_generation,
+            maximum_age_days=maximum_age_days,
+        )
+
+    except (
+        SourceRegistryVerificationError,
+        OSError,
+        ValueError,
+    ) as exc:
+        console.print(f"[bold red]Registry activation failed:[/bold red] {exc}")
+        raise typer.Exit(code=11) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                "registry_sha256": (verified.trust.registry_sha256),
+                "generation": (verified.lifecycle.generation),
+                "signer_id": (verified.trust.signer_id),
+                "trust": (verified.trust.state.value),
+                "lifecycle": (verified.lifecycle.state.value),
             },
             indent=2,
         )
