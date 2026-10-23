@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 php-sentinel = "php_sentinel.cli:app"
+php-sentinel-matrix = "php_sentinel.matrix_cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

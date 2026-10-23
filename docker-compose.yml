@@ -19,6 +19,17 @@ services:
       - ./lab/patched/index.php:/var/www/html/index.php:ro
 
 
+
+  candidate-php:
+    image: php:8.5.11-apache
+    networks:
+      - php-sentinel-lab
+    profiles: ["lab"]
+    ports:
+      - "127.0.0.1:18081:80"
+    volumes:
+      - ./lab/vulnerable/index.php:/var/www/html/index.php:ro
+
   vendor-backport-sim:
     image: php:8.5.12-apache
     networks:
