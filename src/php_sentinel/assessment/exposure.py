@@ -13,7 +13,7 @@ from php_sentinel.intelligence.version_policy import evaluate_version
 from php_sentinel.models.assessment import Assessment, AssessmentStatus
 from php_sentinel.models.evidence import Confidence, Evidence, EvidenceKind
 from php_sentinel.models.fingerprint import Fingerprint
-from php_sentinel.models.vendor import VendorEvidence
+from php_sentinel.models.vendor import VendorEvidence, VendorFamily
 
 
 def assess_response(
@@ -144,7 +144,15 @@ def assess_response(
 
     if backport.fixed_by_vendor is False:
         result.status = AssessmentStatus.POTENTIALLY_AFFECTED
-        result.remediation = list(remediation_for(result.status))
+
+        if vendor_evidence and vendor_evidence.vendor == VendorFamily.UPSTREAM:
+            result.remediation = [
+                ("Upgrade this upstream PHP runtime to a confirmed fixed release."),
+                "Do not rely on banner suppression as mitigation.",
+            ]
+        else:
+            result.remediation = list(remediation_for(result.status))
+
         return result
 
     if policy.requires_vendor_evidence:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 from php_sentinel.assessment.exposure import assess_response
+from php_sentinel.assessment.finding_engine import build_findings
 from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.cve_decision_engine import decide_cves
 from php_sentinel.models.unified import (
@@ -102,11 +103,18 @@ def run_unified_assessment(
         body_sha256=hashlib.sha256(body).hexdigest(),
     )
 
+    findings = build_findings(
+        target=target,
+        assessment=assessment,
+        cve_report=cve_report,
+    )
+
     return UnifiedAssessmentReport(
         target=target,
         http=metadata,
         assessment=assessment,
         cve_decisions=cve_report,
+        findings=findings,
         lab_validation=lab_validation,
         notes=[
             (

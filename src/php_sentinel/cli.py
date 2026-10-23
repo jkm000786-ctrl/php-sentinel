@@ -16,6 +16,7 @@ from php_sentinel.models.vendor import (
     VendorEvidence,
     VendorFamily,
 )
+from php_sentinel.reporting.markdown import render_markdown_report
 from php_sentinel.validation.runner import run_lab_validation
 
 app = typer.Typer(
@@ -305,6 +306,13 @@ def scan(
             help="Write unified evidence report to JSON.",
         ),
     ] = None,
+    markdown_out: Annotated[
+        Path | None,
+        typer.Option(
+            "--markdown-out",
+            help="Write human-readable Markdown report.",
+        ),
+    ] = None,
 ) -> None:
     validation = None
 
@@ -354,6 +362,17 @@ def scan(
             evidence_out,
         )
         console.print(f"[green]Unified evidence written:[/green] {path}")
+
+    if markdown_out:
+        markdown_out.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        markdown_out.write_text(
+            render_markdown_report(report),
+            encoding="utf-8",
+        )
+        console.print(f"[green]Markdown report written:[/green] {markdown_out}")
 
     if json_output:
         typer.echo(
