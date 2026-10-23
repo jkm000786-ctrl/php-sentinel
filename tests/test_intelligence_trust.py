@@ -194,3 +194,53 @@ def test_external_policy_loader_fails_closed(
             manifest_path=manifest_path,
             trust_store_path=trust_path,
         )
+
+
+@pytest.mark.parametrize(
+    "signer_id",
+    [
+        "old|new",
+        "|",
+        "a|b|c",
+        "../signer",
+        "signer/name",
+        "name with spaces",
+        ".",
+        "..",
+        "a" * 129,
+    ],
+)
+def test_trusted_signer_rejects_noncanonical_signer_identity(
+    signer_id,
+):
+    _, public_key = key_material()
+
+    with pytest.raises(ValueError):
+        TrustedSigner(
+            signer_id=signer_id,
+            public_key_b64=public_key,
+        )
+
+
+@pytest.mark.parametrize(
+    "signer_id",
+    [
+        "old",
+        "new",
+        "signer-01",
+        "signer_01",
+        "signer.v1",
+        "Signer01",
+    ],
+)
+def test_trusted_signer_accepts_canonical_signer_identity(
+    signer_id,
+):
+    _, public_key = key_material()
+
+    signer = TrustedSigner(
+        signer_id=signer_id,
+        public_key_b64=public_key,
+    )
+
+    assert signer.signer_id == signer_id

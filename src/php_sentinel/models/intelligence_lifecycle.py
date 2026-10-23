@@ -77,7 +77,11 @@ class LifecycleStateRecord(BaseModel):
     policy_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
     )
-    signer_id: str
+    signer_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
     accepted_at: datetime
 
 

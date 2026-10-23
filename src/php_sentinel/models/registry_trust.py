@@ -44,6 +44,8 @@ class SourceRegistryManifest(BaseModel):
 
     signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     algorithm: str = "ed25519"
@@ -188,7 +190,11 @@ class SourceRegistryStateRecord(BaseModel):
         pattern=r"^[0-9a-f]{64}$",
     )
 
-    signer_id: str
+    signer_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
 
     accepted_at: datetime
 

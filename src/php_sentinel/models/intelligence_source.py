@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -55,6 +56,9 @@ class IntelligenceSourceChannel(BaseModel):
         return value
 
 
+_CANONICAL_SIGNER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 class IntelligenceSource(BaseModel):
     source_id: str = Field(
         min_length=1,
@@ -74,6 +78,18 @@ class IntelligenceSource(BaseModel):
     channels: list[IntelligenceSourceChannel] = Field(
         min_length=1,
     )
+
+    @field_validator("allowed_signer_ids")
+    @classmethod
+    def validate_allowed_signer_ids(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        for signer_id in value:
+            if len(signer_id) > 128 or not _CANONICAL_SIGNER_ID_RE.fullmatch(signer_id):
+                raise ValueError("Source allowed signer IDs must use canonical signer identity.")
+
+        return value
 
     @field_validator("base_url")
     @classmethod

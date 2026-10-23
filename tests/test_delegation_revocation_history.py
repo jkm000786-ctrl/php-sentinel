@@ -932,3 +932,61 @@ def test_revocation_history_contexts_remain_separate():
 
     assert intelligence.revocation_records == {}
     assert registry.revocation_records == {}
+
+
+def test_delegation_rejects_history_key_delimiter_in_signer_ids():
+    old_private, old_public = key_pair()
+    _, new_public = key_pair()
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        create_signed_signer_delegation(
+            context="intelligence",
+            predecessor_signer_id="a|b",
+            predecessor_private_key_b64=old_private,
+            successor_signer_id="c",
+            successor_public_key_b64=new_public,
+            sequence=1,
+            minimum_successor_generation=1,
+            issued_at=NOW,
+            expires_at=(NOW + timedelta(days=10)),
+        )
+
+    with pytest.raises(ValueError):
+        TrustedSigner(
+            signer_id="a|b",
+            public_key_b64=old_public,
+        )
+
+
+def test_lifecycle_state_rejects_ambiguous_persisted_signer_identity():
+    import pytest
+
+    with pytest.raises(ValueError):
+        LifecycleStateStore(
+            records={
+                "policy": LifecycleStateRecord(
+                    generation=1,
+                    policy_sha256=("0" * 64),
+                    signer_id="a|b",
+                    accepted_at=NOW,
+                )
+            }
+        )
+
+
+def test_registry_state_rejects_ambiguous_persisted_signer_identity():
+    import pytest
+
+    with pytest.raises(ValueError):
+        SourceRegistryStateStore(
+            records={
+                "registry": SourceRegistryStateRecord(
+                    generation=1,
+                    registry_sha256=("0" * 64),
+                    signer_id="a|b",
+                    accepted_at=NOW,
+                )
+            }
+        )

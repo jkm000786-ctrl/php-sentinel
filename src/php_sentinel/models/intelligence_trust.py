@@ -60,10 +60,14 @@ class SignerDelegation(BaseModel):
 
     predecessor_signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     successor_signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     successor_public_key_b64: str = Field(
@@ -145,10 +149,14 @@ class SignerDelegationRevocation(BaseModel):
 
     predecessor_signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     successor_signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     delegation_sequence: int = Field(
@@ -246,6 +254,8 @@ class IntelligenceManifest(BaseModel):
 
     signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     # String rather than Literal so unsupported algorithms can reach
@@ -294,6 +304,8 @@ class IntelligenceManifest(BaseModel):
 class TrustedSigner(BaseModel):
     signer_id: str = Field(
         min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
 
     algorithm: str = "ed25519"

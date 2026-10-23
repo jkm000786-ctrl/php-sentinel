@@ -559,3 +559,20 @@ def test_registry_state_commit_detects_concurrent_change(
             expected_state=(verified.state_snapshot),
             now=NOW,
         )
+
+
+def test_source_registry_manifest_rejects_noncanonical_signer_identity():
+    import pytest
+
+    registry = IntelligenceSourceRegistry()
+    private_key, _ = key_material()
+
+    with pytest.raises(ValueError):
+        create_signed_source_registry_manifest(
+            registry=registry,
+            signer_id="registry|signer",
+            private_key_b64=private_key,
+            generation=1,
+            issued_at=NOW,
+            expires_at=(NOW + timedelta(days=1)),
+        )
