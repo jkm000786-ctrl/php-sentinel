@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from php_sentinel.models.vendor import BackportStatus, VendorEvidence
+from php_sentinel.models.vendor import (
+    BackportStatus,
+    VendorEvidence,
+    VendorFamily,
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +24,18 @@ def analyze_backport(
             fixed_by_vendor=None,
             confidence="none",
             rationale=("No vendor security evidence was supplied.",),
+        )
+
+    if evidence.vendor == VendorFamily.UPSTREAM:
+        return BackportDecision(
+            fixed_by_vendor=False,
+            confidence="high",
+            rationale=(
+                (
+                    "The runtime is identified as an upstream PHP build; "
+                    "vendor backport ambiguity does not apply."
+                ),
+            ),
         )
 
     if evidence.backport_status == BackportStatus.CONFIRMED_FIXED:

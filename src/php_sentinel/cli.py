@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from php_sentinel.assessment.exposure import assess_response
+from php_sentinel.assessment.pipeline import run_unified_assessment
 from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.http.client import fetch
 from php_sentinel.models.vendor import (
@@ -225,6 +226,249 @@ def analyze(
     console.print("\n[bold]Recommended action[/bold]")
     for item in result.remediation:
         console.print(f" • {item}")
+
+
+@app.command()
+def scan(
+    target: Annotated[
+        str,
+        typer.Argument(
+            help="Authorized HTTP(S) target URL.",
+        ),
+    ],
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit unified JSON to stdout.",
+        ),
+    ] = False,
+    timeout: Annotated[
+        float,
+        typer.Option(
+            help="HTTP timeout in seconds.",
+        ),
+    ] = 10.0,
+    vendor: Annotated[
+        VendorFamily,
+        typer.Option(
+            "--vendor",
+            help="Package/vendor family when independently known.",
+        ),
+    ] = VendorFamily.UNKNOWN,
+    package_name: Annotated[
+        str | None,
+        typer.Option(
+            "--package-name",
+            help="Installed PHP package name from trusted evidence.",
+        ),
+    ] = None,
+    package_version: Annotated[
+        str | None,
+        typer.Option(
+            "--package-version",
+            help="Full installed package version from trusted evidence.",
+        ),
+    ] = None,
+    backport_status: Annotated[
+        BackportStatus,
+        typer.Option(
+            "--backport-status",
+            help="Vendor fix evidence classification.",
+        ),
+    ] = BackportStatus.UNKNOWN,
+    advisory_reference: Annotated[
+        str | None,
+        typer.Option(
+            "--advisory-ref",
+            help="Vendor security advisory or package reference.",
+        ),
+    ] = None,
+    validate_lab: Annotated[
+        bool,
+        typer.Option(
+            "--validate-lab",
+            help="Run safe loopback-only validation before scan.",
+        ),
+    ] = False,
+    authorize_lab: Annotated[
+        bool,
+        typer.Option(
+            "--authorize-lab",
+            help="Explicitly authorize local laboratory validation.",
+        ),
+    ] = False,
+    evidence_out: Annotated[
+        Path | None,
+        typer.Option(
+            "--evidence-out",
+            help="Write unified evidence report to JSON.",
+        ),
+    ] = None,
+) -> None:
+    validation = None
+
+    if validate_lab:
+        validation = run_lab_validation(
+            target,
+            explicit_authorization=authorize_lab,
+            timeout=timeout,
+        )
+
+        if not validation.authorized:
+            if evidence_out:
+                denied_path = evidence_out.with_name(
+                    f"{evidence_out.stem}-validation-denied{evidence_out.suffix or '.json'}"
+                )
+                path = write_json_evidence(
+                    validation,
+                    denied_path,
+                )
+                console.print(f"[yellow]Validation denial evidence written:[/yellow] {path}")
+
+            console.print("[red]Lab validation denied by scope policy.[/red]")
+
+            for reason in validation.notes:
+                console.print(f" • {reason}")
+
+            raise typer.Exit(code=3)
+
+    try:
+        report = run_unified_assessment(
+            target,
+            timeout=timeout,
+            vendor=vendor,
+            package_name=package_name,
+            package_version=package_version,
+            backport_status=backport_status,
+            advisory_reference=advisory_reference,
+            lab_validation=validation,
+        )
+    except httpx.HTTPError as exc:
+        console.print(f"[red]HTTP error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    if evidence_out:
+        path = write_json_evidence(
+            report,
+            evidence_out,
+        )
+        console.print(f"[green]Unified evidence written:[/green] {path}")
+
+    if json_output:
+        typer.echo(
+            json.dumps(
+                report.model_dump(mode="json"),
+                indent=2,
+            )
+        )
+        return
+
+    assessment = report.assessment
+
+    summary = Table(title="PHP Sentinel Unified Assessment")
+    summary.add_column("Field")
+    summary.add_column("Value")
+
+    summary.add_row(
+        "Requested target",
+        report.http.requested_url,
+    )
+    summary.add_row(
+        "Final URL",
+        report.http.final_url,
+    )
+    summary.add_row(
+        "HTTP status",
+        str(report.http.status_code),
+    )
+    summary.add_row(
+        "Redirects",
+        str(report.http.redirect_count),
+    )
+    summary.add_row(
+        "PHP detected",
+        str(assessment.php_detected),
+    )
+    summary.add_row(
+        "PHP confidence",
+        f"{assessment.php_confidence:.0%}",
+    )
+    summary.add_row(
+        "PHP version",
+        assessment.php_version or "unknown",
+    )
+    summary.add_row(
+        "Server",
+        assessment.server or "unknown",
+    )
+    summary.add_row(
+        "SAPI hypothesis",
+        assessment.fingerprint.sapi.value,
+    )
+    summary.add_row(
+        "SAPI confidence",
+        f"{assessment.fingerprint.sapi_confidence:.0%}",
+    )
+    summary.add_row(
+        "Assessment",
+        assessment.status.value,
+    )
+    summary.add_row(
+        "Exposure priority",
+        assessment.exposure_priority,
+    )
+    summary.add_row(
+        "Body SHA-256",
+        report.http.body_sha256,
+    )
+
+    console.print(summary)
+
+    cve_table = Table(title="Per-CVE Decisions")
+    cve_table.add_column("CVE")
+    cve_table.add_column("Status")
+    cve_table.add_column("Confidence")
+    cve_table.add_column("Priority")
+    cve_table.add_column("Fixed threshold")
+
+    for decision in report.cve_decisions.decisions:
+        cve_table.add_row(
+            decision.cve_id,
+            decision.status.value,
+            decision.confidence.value,
+            decision.exposure_priority.value,
+            decision.fixed_version or "n/a",
+        )
+
+    console.print(cve_table)
+
+    console.print("\n[bold]Assessment rationale[/bold]")
+
+    for item in assessment.rationale:
+        console.print(f" • {item}")
+
+    console.print("\n[bold]CVE decisions[/bold]")
+
+    for decision in report.cve_decisions.decisions:
+        console.print(
+            f" • {decision.cve_id}: {decision.status.value} ({decision.confidence.value})"
+        )
+
+    console.print("\n[bold]Recommended action[/bold]")
+
+    seen: set[str] = set()
+
+    for item in assessment.remediation:
+        if item not in seen:
+            console.print(f" • {item}")
+            seen.add(item)
+
+    for decision in report.cve_decisions.decisions:
+        for item in decision.remediation:
+            if item not in seen:
+                console.print(f" • {item}")
+                seen.add(item)
 
 
 if __name__ == "__main__":
