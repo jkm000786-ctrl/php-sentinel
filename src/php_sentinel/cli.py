@@ -25,7 +25,7 @@ def analyze(
         response = fetch(target, timeout=timeout)
     except httpx.HTTPError as exc:
         console.print(f"[red]HTTP error:[/red] {exc}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from exc
 
     result = assess_response(target, response)
 
@@ -39,10 +39,18 @@ def analyze(
     table.add_row("Target", result.target)
     table.add_row("HTTP status", str(response.status_code))
     table.add_row("PHP detected", str(result.php_detected))
+    table.add_row("PHP confidence", f"{result.php_confidence:.0%}")
     table.add_row("PHP version", result.php_version or "unknown")
     table.add_row("Server", result.server or "unknown")
+    table.add_row("Server family", result.fingerprint.server_family.value)
+    table.add_row("SAPI hypothesis", result.fingerprint.sapi.value)
+    table.add_row("SAPI confidence", f"{result.fingerprint.sapi_confidence:.0%}")
+    table.add_row("Exposure priority", result.exposure_priority)
     table.add_row("Assessment", result.status.value)
-    table.add_row("Relevant CVEs", ", ".join(result.applicable_cves) or "none established")
+    table.add_row(
+        "Relevant CVEs",
+        ", ".join(result.applicable_cves) or "none established",
+    )
     console.print(table)
 
     console.print("\n[bold]Rationale[/bold]")
