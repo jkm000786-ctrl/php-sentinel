@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
@@ -26,21 +26,27 @@ from php_sentinel.models.intelligence_trust import (
     TrustStore,
 )
 
-SUPPORTED_MANIFEST_VERSION = 1
+SUPPORTED_MANIFEST_VERSIONS = frozenset({1, 2})
 
 
 def manifest_signing_payload(
     manifest: IntelligenceManifest,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "manifest_version": manifest.manifest_version,
         "policy_id": manifest.policy_id,
         "schema_version": manifest.schema_version,
         "policy_sha256": manifest.policy_sha256,
-        "issued_at": (manifest.issued_at.isoformat()),
+        "issued_at": manifest.issued_at.isoformat(),
         "signer_id": manifest.signer_id,
         "algorithm": manifest.algorithm,
     }
+
+    if manifest.manifest_version >= 2:
+        payload["generation"] = manifest.generation
+        payload["expires_at"] = manifest.expires_at.isoformat() if manifest.expires_at else None
+
+    return payload
 
 
 def manifest_signing_bytes(
@@ -61,12 +67,13 @@ def load_manifest(
 
     manifest = IntelligenceManifest.model_validate(data)
 
-    if manifest.manifest_version != SUPPORTED_MANIFEST_VERSION:
+    if manifest.manifest_version not in SUPPORTED_MANIFEST_VERSIONS:
+        supported = ", ".join(str(item) for item in sorted(SUPPORTED_MANIFEST_VERSIONS))
+
         raise ValueError(
             "Unsupported intelligence manifest "
             f"version={manifest.manifest_version}. "
-            "Supported version: "
-            f"{SUPPORTED_MANIFEST_VERSION}."
+            f"Supported versions: {supported}."
         )
 
     return manifest
@@ -266,13 +273,14 @@ def verify_manifest(
     )
 
 
-def load_verified_external_policy(
+def load_verified_external_bundle(
     *,
     policy_path: Path | str,
     manifest_path: Path | str,
     trust_store_path: Path | str,
 ) -> tuple[
     IntelligencePolicy,
+    IntelligenceManifest,
     IntelligenceTrustDecision,
 ]:
     policy = load_policy(policy_path)
@@ -290,6 +298,32 @@ def load_verified_external_policy(
             f"External intelligence policy trust verification failed: {decision.state.value}."
         )
 
+    return (
+        policy,
+        manifest,
+        decision,
+    )
+
+
+def load_verified_external_policy(
+    *,
+    policy_path: Path | str,
+    manifest_path: Path | str,
+    trust_store_path: Path | str,
+) -> tuple[
+    IntelligencePolicy,
+    IntelligenceTrustDecision,
+]:
+    (
+        policy,
+        _,
+        decision,
+    ) = load_verified_external_bundle(
+        policy_path=policy_path,
+        manifest_path=manifest_path,
+        trust_store_path=trust_store_path,
+    )
+
     return policy, decision
 
 
@@ -299,6 +333,10 @@ def create_signed_manifest(
     signer_id: str,
     private_key_b64: str,
     issued_at: datetime | None = None,
+    generation: int = 1,
+    expires_at: datetime | None = None,
+    validity_days: int = 30,
+    manifest_version: int = 2,
 ) -> IntelligenceManifest:
     private_bytes = base64.b64decode(
         private_key_b64,
@@ -307,11 +345,23 @@ def create_signed_manifest(
 
     private_key = Ed25519PrivateKey.from_private_bytes(private_bytes)
 
+    issued = issued_at or datetime.now(UTC)
+
+    if manifest_version >= 2:
+        expiry = expires_at or (issued + timedelta(days=validity_days))
+        manifest_generation = generation
+    else:
+        expiry = None
+        manifest_generation = None
+
     manifest = IntelligenceManifest(
+        manifest_version=manifest_version,
         policy_id=policy.policy_id,
         schema_version=policy.schema_version,
         policy_sha256=policy_sha256(policy),
-        issued_at=(issued_at or datetime.now(UTC)),
+        generation=manifest_generation,
+        issued_at=issued,
+        expires_at=expiry,
         signer_id=signer_id,
         algorithm="ed25519",
         signature_b64="pending",

@@ -13,7 +13,10 @@ from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.activation import (
     IntelligenceActivationError,
-    activate_intelligence,
+    activate_intelligence_with_lifecycle,
+)
+from php_sentinel.intelligence.lifecycle import (
+    DEFAULT_LIFECYCLE_STATE_PATH,
 )
 from php_sentinel.models.vendor import (
     BackportStatus,
@@ -338,15 +341,40 @@ def scan(
             help=("Trusted signer store for external intelligence activation."),
         ),
     ] = None,
+    minimum_policy_generation: Annotated[
+        int,
+        typer.Option(
+            "--minimum-policy-generation",
+            help=("Reject external manifests below this generation."),
+        ),
+    ] = 1,
+    max_policy_age_days: Annotated[
+        int,
+        typer.Option(
+            "--max-policy-age-days",
+            help=("Maximum accepted age for an external manifest."),
+        ),
+    ] = 30,
+    lifecycle_state_path: Annotated[
+        Path,
+        typer.Option(
+            "--lifecycle-state",
+            help=("Persistent rollback/replay protection state for external intelligence."),
+        ),
+    ] = DEFAULT_LIFECYCLE_STATE_PATH,
 ) -> None:
     try:
         (
             selected_policy,
             intelligence_trust,
-        ) = activate_intelligence(
+            intelligence_lifecycle,
+        ) = activate_intelligence_with_lifecycle(
             policy_path=policy_path,
             manifest_path=manifest_path,
             trust_store_path=trust_store_path,
+            lifecycle_state_path=(lifecycle_state_path if policy_path is not None else None),
+            minimum_generation=(minimum_policy_generation),
+            maximum_age_days=(max_policy_age_days),
         )
     except IntelligenceActivationError as exc:
         console.print(f"[red]Intelligence activation denied:[/red] {exc}")
@@ -391,6 +419,7 @@ def scan(
             lab_validation=validation,
             intelligence_policy=selected_policy,
             intelligence_trust=intelligence_trust,
+            intelligence_lifecycle=(intelligence_lifecycle),
         )
     except httpx.HTTPError as exc:
         console.print(f"[red]HTTP error:[/red] {exc}")
@@ -492,6 +521,18 @@ def scan(
     summary.add_row(
         "Intelligence signer",
         (report.provenance.intelligence_signer_id or "none"),
+    )
+    summary.add_row(
+        "Lifecycle state",
+        (report.provenance.intelligence_lifecycle_state or "legacy/unknown"),
+    )
+    summary.add_row(
+        "Policy generation",
+        (
+            str(report.provenance.intelligence_generation)
+            if (report.provenance.intelligence_generation is not None)
+            else "n/a"
+        ),
     )
 
     console.print(summary)

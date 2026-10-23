@@ -46,3 +46,25 @@ def test_scan_rejects_external_policy_without_manifest(
     assert "intelligence activation denied" in output
     assert "--manifest" in output
     assert "--trust-store" in output
+
+
+def test_scan_help_exposes_lifecycle_controls():
+    from typer.main import get_command
+
+    root = get_command(app)
+
+    scan_command = root.commands["scan"]
+
+    option_names = {
+        option
+        for param in scan_command.params
+        for option in getattr(
+            param,
+            "opts",
+            [],
+        )
+    }
+
+    assert "--minimum-policy-generation" in option_names
+    assert "--max-policy-age-days" in option_names
+    assert "--lifecycle-state" in option_names

@@ -24,7 +24,7 @@ class IntelligenceTrustState(str, Enum):
 
 class IntelligenceManifest(BaseModel):
     manifest_version: int = Field(
-        default=1,
+        default=2,
         ge=1,
     )
     policy_id: str = Field(
@@ -36,7 +36,15 @@ class IntelligenceManifest(BaseModel):
     policy_sha256: str = Field(
         pattern=r"^[0-9a-f]{64}$",
     )
+
+    # Phase 15 lifecycle metadata.
+    generation: int | None = Field(
+        default=None,
+        ge=1,
+    )
     issued_at: datetime
+    expires_at: datetime | None = None
+
     signer_id: str = Field(
         min_length=1,
     )
@@ -44,6 +52,28 @@ class IntelligenceManifest(BaseModel):
     signature_b64: str = Field(
         min_length=1,
     )
+
+    @model_validator(mode="after")
+    def validate_lifecycle(
+        self,
+    ) -> IntelligenceManifest:
+        if self.issued_at.tzinfo is None:
+            raise ValueError("Manifest issued_at must include timezone information.")
+
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise ValueError("Manifest expires_at must include timezone information.")
+
+        if self.manifest_version >= 2:
+            if self.generation is None:
+                raise ValueError("Manifest v2 requires generation.")
+
+            if self.expires_at is None:
+                raise ValueError("Manifest v2 requires expires_at.")
+
+        if self.expires_at is not None and self.expires_at <= self.issued_at:
+            raise ValueError("Manifest expires_at must be later than issued_at.")
+
+        return self
 
 
 class TrustedSigner(BaseModel):

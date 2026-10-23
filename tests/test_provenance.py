@@ -193,3 +193,18 @@ def test_custom_unsigned_policy_is_not_marked_trusted():
     assert provenance.intelligence_trust_state == "unsigned"
 
     assert provenance.intelligence_signer_id is None
+
+
+def test_bundled_provenance_contains_current_lifecycle():
+    provenance = build_provenance(
+        canonical_payload={
+            "target": "phase15",
+        },
+        target_identity_payload={
+            "target": "phase15",
+        },
+    )
+
+    assert provenance.intelligence_lifecycle_state == "current"
+
+    assert provenance.intelligence_generation is None
