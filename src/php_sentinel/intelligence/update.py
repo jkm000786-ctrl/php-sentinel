@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import ipaddress
 import json
 import os
 import shutil
 import socket
+import stat
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +17,7 @@ import httpx
 
 from php_sentinel.intelligence.activation import (
     VerifiedIntelligenceSelection,
-    activate_verified_intelligence,
+    activate_verified_intelligence_objects,
 )
 from php_sentinel.intelligence.lifecycle import (
     evaluate_lifecycle,
@@ -23,11 +25,13 @@ from php_sentinel.intelligence.lifecycle import (
 )
 from php_sentinel.intelligence.repository import (
     load_policy,
+    parse_policy_bytes,
     policy_sha256,
 )
 from php_sentinel.intelligence.trust import (
     load_manifest,
     load_trust_store,
+    parse_manifest_bytes,
     verify_manifest,
 )
 from php_sentinel.models.intelligence_lifecycle import (
@@ -950,6 +954,112 @@ def promote_verified_candidate(
     return final_directory
 
 
+def _open_verified_cache_directory(
+    directory: Path,
+) -> tuple[Path, int]:
+    if directory.is_symlink():
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache entry must not be a symbolic link: {directory}."
+        )
+
+    try:
+        resolved = directory.resolve(strict=True)
+    except OSError as exc:
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache entry cannot be resolved: {directory}."
+        ) from exc
+
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_DIRECTORY",
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            resolved,
+            flags,
+        )
+    except OSError as exc:
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache entry could not be opened safely: {resolved}."
+        ) from exc
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISDIR(status.st_mode):
+            raise IntelligenceVerifiedCacheError(
+                f"Verified cache entry is not a directory: {resolved}."
+            )
+
+        return resolved, descriptor
+
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _read_cache_artifact_bytes(
+    *,
+    directory: Path,
+    directory_fd: int,
+    filename: str,
+) -> bytes:
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            filename,
+            flags,
+            dir_fd=directory_fd,
+        )
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise IntelligenceVerifiedCacheError(
+                f"Verified cache artifact must not be a symbolic link: {directory / filename}."
+            ) from exc
+
+        raise IntelligenceVerifiedCacheError(
+            f"Verified cache artifact could not be opened safely: {directory / filename}."
+        ) from exc
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise IntelligenceVerifiedCacheError(
+                f"Verified cache artifact is not a regular file: {directory / filename}."
+            )
+
+        chunks: list[bytes] = []
+
+        while True:
+            chunk = os.read(
+                descriptor,
+                1024 * 1024,
+            )
+
+            if not chunk:
+                break
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
+
+
 def _validated_cache_artifact(
     *,
     directory: Path,
@@ -983,21 +1093,18 @@ def _validated_cache_artifact(
     return resolved_path
 
 
-def _load_verification_metadata(
+def _parse_verification_metadata_bytes(
+    *,
+    payload: bytes,
     cache_directory: Path,
 ) -> IntelligenceUpdateVerificationMetadata:
-    path = _validated_cache_artifact(
-        directory=cache_directory,
-        filename=VERIFICATION_METADATA_FILENAME,
-    )
-
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(payload.decode("utf-8"))
 
         metadata = IntelligenceUpdateVerificationMetadata.model_validate(data)
 
     except (
-        OSError,
+        UnicodeDecodeError,
         ValueError,
         json.JSONDecodeError,
     ) as exc:
@@ -1011,62 +1118,51 @@ def _load_verification_metadata(
     return metadata
 
 
-def inspect_verified_cache_entry(
+def _inspect_verified_cache_entry_bundle(
     cache_directory: Path | str,
-) -> IntelligenceVerifiedCacheEntry:
-    """
-    Inspect cached bytes without assigning trust.
-
-    verification.json is checked for consistency but is never accepted
-    as cryptographic or lifecycle authority.
-    """
-
+) -> tuple[
+    IntelligenceVerifiedCacheEntry,
+    IntelligencePolicy,
+    IntelligenceManifest,
+]:
     directory = Path(cache_directory)
 
-    if directory.is_symlink():
-        raise IntelligenceVerifiedCacheError(
-            f"Verified cache entry must not be a symbolic link: {directory}."
-        )
-
-    if not directory.is_dir():
-        raise IntelligenceVerifiedCacheError(
-            f"Verified cache entry is not a directory: {directory}."
-        )
+    resolved_directory, directory_fd = _open_verified_cache_directory(directory)
 
     try:
-        directory = directory.resolve(strict=True)
-    except OSError as exc:
-        raise IntelligenceVerifiedCacheError(
-            f"Verified cache entry cannot be resolved: {directory}."
-        ) from exc
+        policy_bytes = _read_cache_artifact_bytes(
+            directory=resolved_directory,
+            directory_fd=directory_fd,
+            filename=VERIFIED_POLICY_FILENAME,
+        )
 
-    policy_path = _validated_cache_artifact(
-        directory=directory,
-        filename=VERIFIED_POLICY_FILENAME,
-    )
+        manifest_bytes = _read_cache_artifact_bytes(
+            directory=resolved_directory,
+            directory_fd=directory_fd,
+            filename=VERIFIED_MANIFEST_FILENAME,
+        )
 
-    manifest_path = _validated_cache_artifact(
-        directory=directory,
-        filename=VERIFIED_MANIFEST_FILENAME,
-    )
+        metadata_bytes = _read_cache_artifact_bytes(
+            directory=resolved_directory,
+            directory_fd=directory_fd,
+            filename=VERIFICATION_METADATA_FILENAME,
+        )
+
+    finally:
+        os.close(directory_fd)
 
     try:
-        policy_bytes = policy_path.read_bytes()
-
-        manifest_bytes = manifest_path.read_bytes()
-
-        policy = load_policy(policy_path)
-
-        manifest = load_manifest(manifest_path)
+        policy = parse_policy_bytes(policy_bytes)
+        manifest = parse_manifest_bytes(manifest_bytes)
 
     except (
-        OSError,
+        UnicodeDecodeError,
         ValueError,
         json.JSONDecodeError,
     ) as exc:
         raise IntelligenceVerifiedCacheError(
             "Verified cache entry contains unreadable or invalid "
-            f"policy/manifest data: {directory}."
+            f"policy/manifest data: {resolved_directory}."
         ) from exc
 
     digest = policy_sha256(policy)
@@ -1085,7 +1181,10 @@ def inspect_verified_cache_entry(
             "Verified cache manifest lacks a lifecycle generation."
         )
 
-    metadata = _load_verification_metadata(directory)
+    metadata = _parse_verification_metadata_bytes(
+        payload=metadata_bytes,
+        cache_directory=resolved_directory,
+    )
 
     metadata_consistent = (
         metadata.policy_id == policy.policy_id
@@ -1105,23 +1204,47 @@ def inspect_verified_cache_entry(
 
     bundle_digest = _sha256_bytes(policy_bytes + b"\x00" + manifest_bytes)
 
-    return IntelligenceVerifiedCacheEntry(
-        path=str(directory),
-        policy_id=(policy.policy_id),
+    entry = IntelligenceVerifiedCacheEntry(
+        path=str(resolved_directory),
+        policy_id=policy.policy_id,
         policy_sha256=digest,
-        generation=(manifest.generation),
-        manifest_version=(manifest.manifest_version),
-        signer_id=(manifest.signer_id),
+        generation=manifest.generation,
+        manifest_version=manifest.manifest_version,
+        signer_id=manifest.signer_id,
         source_id=metadata.source_id,
         channel=metadata.channel,
         source_policy_url=metadata.source_policy_url,
         source_manifest_url=metadata.source_manifest_url,
         staged_policy_transport_sha256=(metadata.staged_policy_transport_sha256),
         staged_manifest_transport_sha256=(metadata.staged_manifest_transport_sha256),
-        bundle_sha256=(bundle_digest),
+        bundle_sha256=bundle_digest,
         verification_metadata_present=True,
         verification_metadata_consistent=True,
     )
+
+    return (
+        entry,
+        policy,
+        manifest,
+    )
+
+
+def inspect_verified_cache_entry(
+    cache_directory: Path | str,
+) -> IntelligenceVerifiedCacheEntry:
+    """
+    Inspect cached bytes without assigning trust.
+
+    Cache artifacts are opened relative to one already-open cache-directory
+    descriptor and with no-follow semantics where the platform provides them.
+
+    verification.json is checked for consistency but is never accepted
+    as cryptographic or lifecycle authority.
+    """
+
+    entry, _, _ = _inspect_verified_cache_entry_bundle(cache_directory)
+
+    return entry
 
 
 def discover_verified_cache(
@@ -1258,24 +1381,26 @@ def activate_cached_intelligence(
     now: datetime | None = None,
 ) -> VerifiedIntelligenceSelection:
     """
-    Activate a cache entry through the existing authoritative boundary.
+    Activate the exact cache objects opened through the hardened cache
+    filesystem boundary.
 
     Cached verification metadata is never used as trust authority.
     """
 
-    directory = Path(cache_directory)
+    (
+        _,
+        policy,
+        manifest,
+    ) = _inspect_verified_cache_entry_bundle(cache_directory)
 
-    # Reject structural corruption before entering activation.
-    inspect_verified_cache_entry(directory)
-
-    return activate_verified_intelligence(
-        policy_path=(directory / VERIFIED_POLICY_FILENAME),
-        manifest_path=(directory / VERIFIED_MANIFEST_FILENAME),
-        trust_store_path=(trust_store_path),
-        lifecycle_state_path=(lifecycle_state_path),
-        minimum_generation=(minimum_generation),
-        maximum_age_days=(maximum_age_days),
-        maximum_future_skew_seconds=(maximum_future_skew_seconds),
+    return activate_verified_intelligence_objects(
+        policy=policy,
+        manifest=manifest,
+        trust_store_path=trust_store_path,
+        lifecycle_state_path=lifecycle_state_path,
+        minimum_generation=minimum_generation,
+        maximum_age_days=maximum_age_days,
+        maximum_future_skew_seconds=maximum_future_skew_seconds,
         now=now,
     )
 

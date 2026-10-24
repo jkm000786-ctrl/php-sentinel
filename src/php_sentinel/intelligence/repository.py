@@ -69,19 +69,25 @@ def _validate_supported_schema(
     return policy
 
 
-def load_policy(
-    path: Path | str | None = None,
+def parse_policy_bytes(
+    payload: bytes,
 ) -> IntelligencePolicy:
-    if path is None:
-        raw = _read_default_policy()
-    else:
-        raw = Path(path).read_text(encoding="utf-8")
-
-    data = json.loads(raw)
+    data = json.loads(payload.decode("utf-8"))
 
     policy = IntelligencePolicy.model_validate(data)
 
     return _validate_supported_schema(policy)
+
+
+def load_policy(
+    path: Path | str | None = None,
+) -> IntelligencePolicy:
+    if path is None:
+        raw = _read_default_policy().encode("utf-8")
+    else:
+        raw = Path(path).read_bytes()
+
+    return parse_policy_bytes(raw)
 
 
 @lru_cache(maxsize=1)

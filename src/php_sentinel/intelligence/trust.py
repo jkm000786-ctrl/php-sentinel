@@ -77,10 +77,10 @@ def manifest_signing_bytes(
     return canonical
 
 
-def load_manifest(
-    path: Path | str,
+def parse_manifest_bytes(
+    payload: bytes,
 ) -> IntelligenceManifest:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = json.loads(payload.decode("utf-8"))
 
     manifest = IntelligenceManifest.model_validate(data)
 
@@ -94,6 +94,12 @@ def load_manifest(
         )
 
     return manifest
+
+
+def load_manifest(
+    path: Path | str,
+) -> IntelligenceManifest:
+    return parse_manifest_bytes(Path(path).read_bytes())
 
 
 def load_trust_store(

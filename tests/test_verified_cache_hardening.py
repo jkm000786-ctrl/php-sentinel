@@ -883,3 +883,63 @@ def test_promotion_rejects_existing_symlinked_policy_artifact(
             tmp_path,
             generation=5,
         )
+
+
+def test_cached_activation_uses_exact_securely_loaded_objects(
+    tmp_path,
+    monkeypatch,
+):
+    (
+        _,
+        _,
+        destination,
+        _,
+        trust_path,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+
+    import php_sentinel.intelligence.update as update_module
+
+    real_activate = update_module.activate_verified_intelligence_objects
+
+    def replace_cache_path_then_activate(
+        *,
+        policy,
+        manifest,
+        **kwargs,
+    ):
+        cached_policy = destination / "policy.json"
+        replacement = tmp_path / "replacement-policy.json"
+
+        replacement.write_text(
+            "{not-json",
+            encoding="utf-8",
+        )
+
+        cached_policy.unlink()
+        cached_policy.symlink_to(replacement)
+
+        return real_activate(
+            policy=policy,
+            manifest=manifest,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        update_module,
+        "activate_verified_intelligence_objects",
+        replace_cache_path_then_activate,
+    )
+
+    selection = activate_cached_intelligence(
+        cache_directory=destination,
+        trust_store_path=trust_path,
+        lifecycle_state_path=(tmp_path / "lifecycle.json"),
+        now=NOW,
+    )
+
+    assert selection.policy.policy_id == default_policy().policy_id

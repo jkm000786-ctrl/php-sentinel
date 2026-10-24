@@ -15,11 +15,13 @@ from php_sentinel.intelligence.lifecycle import (
 )
 from php_sentinel.intelligence.repository import (
     default_policy,
+    load_policy,
 )
 from php_sentinel.intelligence.trust import (
     bundled_policy_trust,
+    load_manifest,
     load_trust_store,
-    load_verified_external_bundle,
+    verify_manifest,
 )
 from php_sentinel.models.intelligence_lifecycle import (
     IntelligenceLifecycleDecision,
@@ -85,11 +87,11 @@ def _verified_selection(
     )
 
 
-def activate_intelligence_with_lifecycle(
+def activate_loaded_intelligence_with_lifecycle(
     *,
-    policy_path: Path | str | None = None,
-    manifest_path: Path | str | None = None,
-    trust_store_path: Path | str | None = None,
+    policy: IntelligencePolicy,
+    manifest,
+    trust_store_path: Path | str,
     lifecycle_state_path: Path | str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
@@ -100,42 +102,29 @@ def activate_intelligence_with_lifecycle(
     IntelligenceTrustDecision,
     IntelligenceLifecycleDecision,
 ]:
-    supplied = (
-        policy_path,
-        manifest_path,
-        trust_store_path,
-    )
+    """
+    Apply authoritative trust and lifecycle evaluation to already-loaded
+    intelligence objects.
 
-    if not any(item is not None for item in supplied):
-        policy = default_policy()
-        trust = bundled_policy_trust(policy)
-        lifecycle = bundled_lifecycle(policy)
-
-        return (
-            policy,
-            trust,
-            lifecycle,
-        )
-
-    if not all(item is not None for item in supplied):
-        raise IntelligenceActivationError(
-            "External intelligence activation "
-            "requires --policy, --manifest, and "
-            "--trust-store together. Unsigned or "
-            "partially specified external policies "
-            "are not activated."
-        )
+    The caller controls how policy and manifest bytes were obtained, but this
+    function does not trust caller-supplied trust or lifecycle decisions.
+    Current local trust and lifecycle authority are re-evaluated here.
+    """
 
     try:
-        (
+        trust_store = load_trust_store(trust_store_path)
+
+        trust = verify_manifest(
             policy,
             manifest,
-            trust,
-        ) = load_verified_external_bundle(
-            policy_path=policy_path,
-            manifest_path=manifest_path,
-            trust_store_path=trust_store_path,
+            trust_store,
+            now=now,
         )
+
+        if not trust.trusted:
+            raise IntelligenceActivationError(
+                f"External intelligence policy trust verification failed: {trust.state.value}."
+            )
 
         state = None
 
@@ -143,14 +132,12 @@ def activate_intelligence_with_lifecycle(
             state = load_lifecycle_state(lifecycle_state_path)
 
         lifecycle_policy = IntelligenceLifecyclePolicy(
-            minimum_generation=(minimum_generation),
-            maximum_age_days=(maximum_age_days),
-            maximum_future_skew_seconds=(maximum_future_skew_seconds),
+            minimum_generation=minimum_generation,
+            maximum_age_days=maximum_age_days,
+            maximum_future_skew_seconds=maximum_future_skew_seconds,
         )
 
         if lifecycle_state_path is not None:
-            trust_store = load_trust_store(trust_store_path)
-
             revocations = resolve_verified_delegation_revocations(
                 trust_store=trust_store,
                 successor_signer_id=manifest.signer_id,
@@ -204,6 +191,70 @@ def activate_intelligence_with_lifecycle(
         raise IntelligenceActivationError(
             f"External intelligence activation failed: {exc}"
         ) from exc
+
+
+def activate_intelligence_with_lifecycle(
+    *,
+    policy_path: Path | str | None = None,
+    manifest_path: Path | str | None = None,
+    trust_store_path: Path | str | None = None,
+    lifecycle_state_path: Path | str | None = None,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> tuple[
+    IntelligencePolicy,
+    IntelligenceTrustDecision,
+    IntelligenceLifecycleDecision,
+]:
+    supplied = (
+        policy_path,
+        manifest_path,
+        trust_store_path,
+    )
+
+    if not any(item is not None for item in supplied):
+        policy = default_policy()
+        trust = bundled_policy_trust(policy)
+        lifecycle = bundled_lifecycle(policy)
+
+        return (
+            policy,
+            trust,
+            lifecycle,
+        )
+
+    if not all(item is not None for item in supplied):
+        raise IntelligenceActivationError(
+            "External intelligence activation "
+            "requires --policy, --manifest, and "
+            "--trust-store together. Unsigned or "
+            "partially specified external policies "
+            "are not activated."
+        )
+
+    try:
+        policy = load_policy(policy_path)
+        manifest = load_manifest(manifest_path)
+    except (
+        OSError,
+        ValueError,
+    ) as exc:
+        raise IntelligenceActivationError(
+            f"External intelligence activation failed: {exc}"
+        ) from exc
+
+    return activate_loaded_intelligence_with_lifecycle(
+        policy=policy,
+        manifest=manifest,
+        trust_store_path=trust_store_path,
+        lifecycle_state_path=lifecycle_state_path,
+        minimum_generation=minimum_generation,
+        maximum_age_days=maximum_age_days,
+        maximum_future_skew_seconds=maximum_future_skew_seconds,
+        now=now,
+    )
 
 
 def activate_intelligence(
@@ -266,6 +317,39 @@ def activate_verified_intelligence(
 
     return _verified_selection(
         policy=policy,
+        trust=trust,
+        lifecycle=lifecycle,
+    )
+
+
+def activate_verified_intelligence_objects(
+    *,
+    policy: IntelligencePolicy,
+    manifest,
+    trust_store_path: Path | str,
+    lifecycle_state_path: Path | str | None = None,
+    minimum_generation: int = 1,
+    maximum_age_days: int = 30,
+    maximum_future_skew_seconds: int = 300,
+    now: datetime | None = None,
+) -> VerifiedIntelligenceSelection:
+    (
+        verified_policy,
+        trust,
+        lifecycle,
+    ) = activate_loaded_intelligence_with_lifecycle(
+        policy=policy,
+        manifest=manifest,
+        trust_store_path=trust_store_path,
+        lifecycle_state_path=lifecycle_state_path,
+        minimum_generation=minimum_generation,
+        maximum_age_days=maximum_age_days,
+        maximum_future_skew_seconds=maximum_future_skew_seconds,
+        now=now,
+    )
+
+    return _verified_selection(
+        policy=verified_policy,
         trust=trust,
         lifecycle=lifecycle,
     )
