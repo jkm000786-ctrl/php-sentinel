@@ -14,6 +14,10 @@ from pathlib import Path
 from php_sentinel.intelligence.delegation import (
     signer_delegation_revocation_sha256,
 )
+from php_sentinel.intelligence.path_anchor import (
+    DirectoryAnchorError,
+    open_directory_anchor,
+)
 from php_sentinel.intelligence.repository import (
     policy_sha256,
 )
@@ -133,72 +137,25 @@ def _open_state_directory(
 ) -> _StateDirectoryAnchor | None:
     directory = state_path.parent
 
-    if create:
-        directory.mkdir(
-            parents=True,
-            exist_ok=True,
+    try:
+        opened = open_directory_anchor(
+            directory,
+            create=create,
             mode=LIFECYCLE_STATE_DIRECTORY_MODE,
         )
-
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-
-    try:
-        descriptor = os.open(
-            directory,
-            flags,
-        )
-    except FileNotFoundError:
-        if not create:
-            return None
-
-        raise LifecycleStateStorageError(
-            f"Lifecycle-state directory does not exist: {directory}."
-        ) from None
-    except OSError as exc:
-        if exc.errno in (
-            errno.ELOOP,
-            errno.ENOTDIR,
-        ):
-            raise LifecycleStateStorageError(
-                "Lifecycle-state directory must be a real directory "
-                f"and must not be a symbolic link: {directory}."
-            ) from exc
-
+    except DirectoryAnchorError as exc:
         raise LifecycleStateStorageError(
             f"Lifecycle-state directory could not be opened safely: {directory}."
         ) from exc
 
-    try:
-        status = os.fstat(descriptor)
+    if opened is None:
+        return None
 
-        if not stat.S_ISDIR(status.st_mode):
-            raise LifecycleStateStorageError(
-                f"Lifecycle-state directory is not a directory: {directory}."
-            )
-
-        try:
-            os.fchmod(
-                descriptor,
-                LIFECYCLE_STATE_DIRECTORY_MODE,
-            )
-        except OSError:
-            # Some filesystems cannot enforce POSIX mode bits.
-            pass
-
-        return _StateDirectoryAnchor(
-            directory_fd=descriptor,
-            state_name=state_path.name,
-            state_path=state_path,
-        )
-
-    except Exception:
-        os.close(descriptor)
-        raise
+    return _StateDirectoryAnchor(
+        directory_fd=opened.descriptor,
+        state_name=state_path.name,
+        state_path=state_path,
+    )
 
 
 def _close_state_directory(

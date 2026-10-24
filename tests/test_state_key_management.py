@@ -213,3 +213,77 @@ def test_key_material_has_random_entropy(
     second = generate_authority_state_key(tmp_path / "second.json")
 
     assert first.key != second.key
+
+
+def test_key_generation_rejects_symlinked_ancestor_directory(
+    tmp_path,
+):
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(
+        real_root,
+        target_is_directory=True,
+    )
+
+    path = linked_root / "nested" / "authority-state.key.json"
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="directory could not be opened safely",
+    ):
+        generate_authority_state_key(path)
+
+    assert not (real_root / "nested").exists()
+
+
+def test_key_load_rejects_symlinked_ancestor_directory(
+    tmp_path,
+):
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+
+    real_key = real_root / "authority-state.key.json"
+
+    generate_authority_state_key(real_key)
+
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(
+        real_root,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="directory could not be opened safely",
+    ):
+        load_authority_state_key(linked_root / "authority-state.key.json")
+
+
+def test_key_parent_traversal_is_rejected(
+    tmp_path,
+):
+    path = tmp_path / "child" / ".." / "authority-state.key.json"
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="directory could not be opened safely",
+    ):
+        generate_authority_state_key(path)
+
+
+def test_nested_key_directories_are_created_component_by_component(
+    tmp_path,
+):
+    path = tmp_path / "one" / "two" / "three" / "authority-state.key.json"
+
+    created = generate_authority_state_key(
+        path,
+        key_id="nested-authority",
+    )
+
+    loaded = load_authority_state_key(path)
+
+    assert loaded == created
+    assert loaded.key_id == "nested-authority"

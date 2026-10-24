@@ -546,3 +546,83 @@ def test_lock_and_state_write_remain_bound_to_open_directory(
     loaded = load_lifecycle_state(persisted_original)
 
     assert loaded == LifecycleStateStore()
+
+
+def test_state_write_rejects_symlinked_ancestor_directory(
+    tmp_path,
+):
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(
+        real_root,
+        target_is_directory=True,
+    )
+
+    state_path = linked_root / "nested" / "lifecycle.json"
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="could not be opened safely",
+    ):
+        save_lifecycle_state(
+            state_path,
+            LifecycleStateStore(),
+        )
+
+    assert not (real_root / "nested").exists()
+
+
+def test_state_read_rejects_symlinked_ancestor_directory(
+    tmp_path,
+):
+    real_root = tmp_path / "real-root"
+    real_root.mkdir()
+
+    state_path_real = real_root / "lifecycle.json"
+    state_path_real.write_text(
+        json.dumps(LifecycleStateStore().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(
+        real_root,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="could not be opened safely",
+    ):
+        load_lifecycle_state(linked_root / "lifecycle.json")
+
+
+def test_state_path_parent_traversal_is_rejected(
+    tmp_path,
+):
+    state_path = tmp_path / "child" / ".." / "lifecycle.json"
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="could not be opened safely",
+    ):
+        save_lifecycle_state(
+            state_path,
+            LifecycleStateStore(),
+        )
+
+
+def test_nested_state_directories_are_created_component_by_component(
+    tmp_path,
+):
+    state_path = tmp_path / "one" / "two" / "three" / "lifecycle.json"
+
+    save_lifecycle_state(
+        state_path,
+        LifecycleStateStore(),
+    )
+
+    assert state_path.exists()
+    assert load_lifecycle_state(state_path) == LifecycleStateStore()

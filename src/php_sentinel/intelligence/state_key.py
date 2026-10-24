@@ -8,6 +8,12 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from php_sentinel.intelligence.path_anchor import (
+    DirectoryAnchor,
+    DirectoryAnchorError,
+    close_directory_anchor,
+    open_directory_anchor,
+)
 from php_sentinel.models.state_key import AuthorityStateKeyRecord
 
 DEFAULT_AUTHORITY_STATE_KEY_PATH = (
@@ -59,52 +65,58 @@ def _read_descriptor_bytes(
     return b"".join(chunks)
 
 
-def _secure_parent_directory(
+def _open_key_parent_directory(
     path: Path,
-) -> None:
-    parent = path.parent
-
-    parent.mkdir(
-        parents=True,
-        exist_ok=True,
-        mode=AUTHORITY_KEY_DIRECTORY_MODE,
-    )
-
+    *,
+    create: bool,
+) -> DirectoryAnchor | None:
     try:
-        os.chmod(
-            parent,
-            AUTHORITY_KEY_DIRECTORY_MODE,
+        return open_directory_anchor(
+            path.parent,
+            create=create,
+            mode=AUTHORITY_KEY_DIRECTORY_MODE,
         )
-    except OSError:
-        # Some filesystems cannot enforce POSIX mode bits.
-        pass
+    except DirectoryAnchorError as exc:
+        raise AuthorityStateKeyStorageError(
+            f"Authority-state key directory could not be opened safely: {path.parent}."
+        ) from exc
 
 
 def _read_authority_key_bytes(
     path: Path,
 ) -> bytes:
+    anchor = _open_key_parent_directory(
+        path,
+        create=False,
+    )
+
+    if anchor is None:
+        raise AuthorityStateKeyStorageError(f"Authority-state key file does not exist: {path}.")
+
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
 
     try:
-        descriptor = os.open(
-            path,
-            flags,
-        )
-    except FileNotFoundError:
-        raise AuthorityStateKeyStorageError(
-            f"Authority-state key file does not exist: {path}."
-        ) from None
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
+        try:
+            descriptor = os.open(
+                path.name,
+                flags,
+                dir_fd=anchor.descriptor,
+            )
+        except FileNotFoundError:
             raise AuthorityStateKeyStorageError(
-                f"Authority-state key file must not be a symbolic link: {path}."
+                f"Authority-state key file does not exist: {path}."
+            ) from None
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise AuthorityStateKeyStorageError(
+                    f"Authority-state key file must not be a symbolic link: {path}."
+                ) from exc
+
+            raise AuthorityStateKeyStorageError(
+                f"Authority-state key file could not be opened safely: {path}."
             ) from exc
 
-        raise AuthorityStateKeyStorageError(
-            f"Authority-state key file could not be opened safely: {path}."
-        ) from exc
-
-    try:
         status = os.fstat(descriptor)
 
         if not stat.S_ISREG(status.st_mode):
@@ -123,7 +135,10 @@ def _read_authority_key_bytes(
         return _read_descriptor_bytes(descriptor)
 
     finally:
-        os.close(descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
+
+        close_directory_anchor(anchor)
 
 
 def load_authority_state_key(
@@ -188,9 +203,15 @@ def generate_authority_state_key(
 ) -> LoadedAuthorityStateKey:
     key_path = Path(path)
 
-    _secure_parent_directory(
+    anchor = _open_key_parent_directory(
         key_path,
+        create=True,
     )
+
+    if anchor is None:
+        raise AuthorityStateKeyStorageError(
+            f"Authority-state key directory does not exist: {key_path.parent}."
+        )
 
     key = os.urandom(
         AUTHORITY_KEY_BYTES,
@@ -214,11 +235,26 @@ def generate_authority_state_key(
     descriptor: int | None = None
 
     try:
-        descriptor = os.open(
-            key_path,
-            flags,
-            AUTHORITY_KEY_FILE_MODE,
-        )
+        try:
+            descriptor = os.open(
+                key_path.name,
+                flags,
+                AUTHORITY_KEY_FILE_MODE,
+                dir_fd=anchor.descriptor,
+            )
+        except FileExistsError:
+            raise AuthorityStateKeyStorageError(
+                f"Authority-state key file already exists: {key_path}."
+            ) from None
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise AuthorityStateKeyStorageError(
+                    f"Authority-state key file must not be a symbolic link: {key_path}."
+                ) from exc
+
+            raise AuthorityStateKeyStorageError(
+                f"Authority-state key file could not be created safely: {key_path}."
+            ) from exc
 
         status = os.fstat(descriptor)
 
@@ -252,40 +288,16 @@ def generate_authority_state_key(
 
         os.fsync(descriptor)
 
-    except FileExistsError:
-        raise AuthorityStateKeyStorageError(
-            f"Authority-state key file already exists: {key_path}."
-        ) from None
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            raise AuthorityStateKeyStorageError(
-                f"Authority-state key file must not be a symbolic link: {key_path}."
-            ) from exc
-
-        raise AuthorityStateKeyStorageError(
-            f"Authority-state key file could not be created safely: {key_path}."
-        ) from exc
+        try:
+            os.fsync(anchor.descriptor)
+        except OSError:
+            pass
 
     finally:
         if descriptor is not None:
             os.close(descriptor)
 
-    try:
-        directory_fd = os.open(
-            key_path.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
-        )
-    except OSError:
-        directory_fd = None
-
-    if directory_fd is not None:
-        try:
-            try:
-                os.fsync(directory_fd)
-            except OSError:
-                pass
-        finally:
-            os.close(directory_fd)
+        close_directory_anchor(anchor)
 
     return LoadedAuthorityStateKey(
         key_id=record.key_id,
