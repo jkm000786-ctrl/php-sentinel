@@ -8,6 +8,10 @@ from pathlib import Path
 
 from packaging.version import Version
 
+from php_sentinel.intelligence.platform_security import (
+    PlatformSecurityCapabilityError,
+    require_nofollow_open,
+)
 from php_sentinel.models.intelligence_policy import (
     CVEPolicy,
     IntelligencePolicy,
@@ -39,13 +43,21 @@ def read_bounded_regular_file(
         raise ValueError("maximum_bytes must be positive.")
 
     selected = Path(path)
+
+    try:
+        require_nofollow_open(
+            operation="Intelligence artifact read",
+        )
+    except PlatformSecurityCapabilityError as exc:
+        raise ValueError(
+            "Intelligence artifact read is unavailable because the current "
+            "platform cannot provide no-follow open semantics."
+        ) from exc
+
     flags = os.O_RDONLY
 
-    for name in (
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= os.O_NOFOLLOW
 
     try:
         descriptor = os.open(

@@ -116,7 +116,7 @@ def _read_authority_key_bytes(
     if anchor is None:
         raise AuthorityStateKeyStorageError(f"Authority-state key file does not exist: {path}.")
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
     descriptor: int | None = None
 
     try:
@@ -257,13 +257,7 @@ def generate_authority_state_key(
 
     payload = _canonical_key_record_bytes(record)
 
-    flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
     descriptor: int | None = None
 

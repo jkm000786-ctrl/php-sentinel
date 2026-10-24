@@ -1010,3 +1010,34 @@ def test_verified_cache_discovery_rejects_excessive_entry_count(
         match="too many entries",
     ):
         discover_verified_cache(root)
+
+
+def test_cache_inspection_fails_closed_when_platform_descriptor_security_is_missing(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.update as update_module
+    from php_sentinel.intelligence.platform_security import (
+        PlatformSecurityCapabilityError,
+    )
+
+    entry = tmp_path / "cache-entry"
+    entry.mkdir()
+
+    def deny(
+        *,
+        operation,
+    ):
+        raise PlatformSecurityCapabilityError(f"{operation} unavailable.")
+
+    monkeypatch.setattr(
+        update_module,
+        "require_verified_cache_descriptor_access",
+        deny,
+    )
+
+    with pytest.raises(
+        update_module.IntelligenceVerifiedCacheError,
+        match="cannot provide the required descriptor security semantics",
+    ):
+        update_module.inspect_verified_cache_entry(entry)

@@ -667,3 +667,37 @@ def test_stage_metadata_symlink_is_rejected(
         match="symbolic link|opened safely",
     ):
         load_stage_metadata(stage)
+
+
+def test_stage_reader_fails_closed_without_nofollow_capability(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.update as update_module
+    from php_sentinel.intelligence.platform_security import (
+        PlatformSecurityCapabilityError,
+    )
+
+    path = tmp_path / "artifact.json"
+    path.write_text("{}", encoding="utf-8")
+
+    def deny(
+        *,
+        operation,
+    ):
+        raise PlatformSecurityCapabilityError(f"{operation} unavailable.")
+
+    monkeypatch.setattr(
+        update_module,
+        "require_nofollow_open",
+        deny,
+    )
+
+    with pytest.raises(
+        update_module.IntelligenceUpdateVerificationError,
+        match="cannot provide no-follow open semantics",
+    ):
+        update_module._read_staged_regular_file_bytes(
+            path,
+            maximum_bytes=1024,
+        )

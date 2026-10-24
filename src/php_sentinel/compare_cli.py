@@ -14,6 +14,10 @@ from rich.table import Table
 from php_sentinel.comparison.engine import (
     compare_reports,
 )
+from php_sentinel.intelligence.platform_security import (
+    PlatformSecurityCapabilityError,
+    require_nofollow_open,
+)
 from php_sentinel.models.unified import (
     UnifiedAssessmentReport,
 )
@@ -31,13 +35,20 @@ def _read_report_bytes(
     if maximum_bytes < 1:
         raise ValueError("maximum_bytes must be positive.")
 
+    try:
+        require_nofollow_open(
+            operation="Comparison report read",
+        )
+    except PlatformSecurityCapabilityError as exc:
+        raise ValueError(
+            "Comparison report read is unavailable because the current platform "
+            "cannot provide no-follow open semantics."
+        ) from exc
+
     flags = os.O_RDONLY
 
-    for name in (
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= os.O_NOFOLLOW
 
     try:
         descriptor = os.open(

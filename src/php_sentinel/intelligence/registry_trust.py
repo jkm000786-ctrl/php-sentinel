@@ -581,7 +581,7 @@ def _read_source_registry_state_bytes(
         owns_anchor = True
 
     try:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
         try:
             descriptor = os.open(
@@ -754,11 +754,7 @@ def _save_source_registry_state_unlocked(
 
     try:
         temporary_flags = (
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
         )
 
         descriptor = os.open(

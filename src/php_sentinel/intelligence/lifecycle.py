@@ -276,7 +276,7 @@ def _open_lock_snapshot(
     anchor: _StateDirectoryAnchor,
     lock_name: str,
 ) -> tuple[int, os.stat_result] | None:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
     lock_path = anchor.state_path.parent / lock_name
 
@@ -440,7 +440,7 @@ def lifecycle_state_lock(
                     | os.O_CREAT
                     | os.O_EXCL
                     | getattr(os, "O_CLOEXEC", 0)
-                    | getattr(os, "O_NOFOLLOW", 0)
+                    | os.O_NOFOLLOW
                 )
 
                 descriptor = os.open(
@@ -536,7 +536,7 @@ def _read_lifecycle_state_bytes(
         owns_anchor = True
 
     try:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
         try:
             descriptor = os.open(
@@ -703,11 +703,7 @@ def _save_lifecycle_state_unlocked(
 
     try:
         temporary_flags = (
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
         )
 
         descriptor = os.open(

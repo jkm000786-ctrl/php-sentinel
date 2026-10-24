@@ -715,3 +715,43 @@ def test_lifecycle_writer_revalidates_mutated_excessive_state(
         )
 
     assert not path.exists()
+
+
+def test_directory_fsync_failure_is_best_effort_after_state_publication(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.lifecycle as lifecycle_module
+    from php_sentinel.models.intelligence_lifecycle import (
+        LifecycleStateStore,
+    )
+
+    state_path = tmp_path / "state" / "lifecycle.json"
+    real_fsync = lifecycle_module.os.fsync
+
+    def selective_fsync(descriptor):
+        status = lifecycle_module.os.fstat(descriptor)
+
+        if lifecycle_module.stat.S_ISDIR(status.st_mode):
+            raise OSError("directory fsync unsupported")
+
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        lifecycle_module.os,
+        "fsync",
+        selective_fsync,
+    )
+
+    lifecycle_module.save_lifecycle_state(
+        state_path,
+        LifecycleStateStore(),
+    )
+
+    assert state_path.is_file()
+
+    loaded = lifecycle_module.load_lifecycle_state(
+        state_path,
+    )
+
+    assert loaded == LifecycleStateStore()

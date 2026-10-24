@@ -23,6 +23,11 @@ from php_sentinel.intelligence.lifecycle import (
     evaluate_lifecycle,
     load_lifecycle_state,
 )
+from php_sentinel.intelligence.platform_security import (
+    PlatformSecurityCapabilityError,
+    require_nofollow_open,
+    require_verified_cache_descriptor_access,
+)
 from php_sentinel.intelligence.repository import (
     load_policy,
     parse_policy_bytes,
@@ -609,13 +614,20 @@ def _read_staged_regular_file_bytes(
     *,
     maximum_bytes: int,
 ) -> bytes:
+    try:
+        require_nofollow_open(
+            operation="Staged intelligence artifact read",
+        )
+    except PlatformSecurityCapabilityError as exc:
+        raise IntelligenceUpdateVerificationError(
+            "Staged intelligence artifact read is unavailable because the "
+            "current platform cannot provide no-follow open semantics."
+        ) from exc
+
     flags = os.O_RDONLY
 
-    for name in (
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= os.O_NOFOLLOW
 
     try:
         descriptor = os.open(
@@ -1048,6 +1060,16 @@ def promote_verified_candidate(
 def _open_verified_cache_directory(
     directory: Path,
 ) -> tuple[Path, int]:
+    try:
+        require_verified_cache_descriptor_access(
+            operation="Verified cache access",
+        )
+    except PlatformSecurityCapabilityError as exc:
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache access is unavailable because the current platform "
+            "cannot provide the required descriptor security semantics."
+        ) from exc
+
     if directory.is_symlink():
         raise IntelligenceVerifiedCacheError(
             f"Verified cache entry must not be a symbolic link: {directory}."
@@ -1060,14 +1082,7 @@ def _open_verified_cache_directory(
             f"Verified cache entry cannot be resolved: {directory}."
         ) from exc
 
-    flags = os.O_RDONLY
-
-    for name in (
-        "O_DIRECTORY",
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
     try:
         descriptor = os.open(
@@ -1100,13 +1115,7 @@ def _read_cache_artifact_bytes(
     directory_fd: int,
     filename: str,
 ) -> bytes:
-    flags = os.O_RDONLY
-
-    for name in (
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
     try:
         descriptor = os.open(

@@ -276,3 +276,68 @@ def test_nonempty_directory_anchor_still_applies_requested_mode(
         assert calls[-1][1] == 0o700
     finally:
         close_directory_anchor(anchor)
+
+
+def test_anchor_fails_closed_when_platform_security_capability_is_missing(
+    tmp_path,
+    monkeypatch,
+):
+    from php_sentinel.intelligence.platform_security import (
+        PlatformSecurityCapabilityError,
+    )
+
+    def deny_capability(
+        *,
+        operation,
+    ):
+        raise PlatformSecurityCapabilityError(f"{operation} is unavailable.")
+
+    monkeypatch.setattr(
+        path_anchor_module,
+        "require_anchored_directory_traversal",
+        deny_capability,
+    )
+
+    target = tmp_path / "state"
+
+    with pytest.raises(
+        path_anchor_module.DirectoryAnchorError,
+        match="platform cannot provide the required filesystem security semantics",
+    ):
+        path_anchor_module.open_directory_anchor(
+            target,
+            create=True,
+            mode=0o700,
+        )
+
+    assert not target.exists()
+
+
+def test_anchor_mode_tightening_is_best_effort_after_secure_open(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "state"
+
+    def deny_fchmod(
+        descriptor,
+        mode,
+    ):
+        raise OSError("mode bits unsupported")
+
+    monkeypatch.setattr(
+        path_anchor_module.os,
+        "fchmod",
+        deny_fchmod,
+    )
+
+    anchor = path_anchor_module.open_directory_anchor(
+        target,
+        create=True,
+        mode=0o700,
+    )
+
+    assert anchor is not None
+    assert target.is_dir()
+
+    path_anchor_module.close_directory_anchor(anchor)

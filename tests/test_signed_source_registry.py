@@ -839,3 +839,44 @@ def test_registry_writer_revalidates_mutated_excessive_state(
         )
 
     assert not path.exists()
+
+
+def test_registry_directory_fsync_failure_is_best_effort_after_publication(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.lifecycle as lifecycle_module
+    import php_sentinel.intelligence.registry_trust as registry_module
+    from php_sentinel.models.registry_trust import (
+        SourceRegistryStateStore,
+    )
+
+    state_path = tmp_path / "state" / "registry.json"
+    real_fsync = lifecycle_module.os.fsync
+
+    def selective_fsync(descriptor):
+        status = lifecycle_module.os.fstat(descriptor)
+
+        if lifecycle_module.stat.S_ISDIR(status.st_mode):
+            raise OSError("directory fsync unsupported")
+
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        lifecycle_module.os,
+        "fsync",
+        selective_fsync,
+    )
+
+    registry_module.save_source_registry_state(
+        state_path,
+        SourceRegistryStateStore(),
+    )
+
+    assert state_path.is_file()
+
+    loaded = registry_module.load_source_registry_state(
+        state_path,
+    )
+
+    assert loaded == SourceRegistryStateStore()

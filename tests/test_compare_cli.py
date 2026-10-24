@@ -63,3 +63,34 @@ def test_compare_report_reader_rejects_nonpositive_limit(
             path,
             maximum_bytes=0,
         )
+
+
+def test_compare_reader_fails_closed_without_nofollow_capability(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.compare_cli as compare_module
+    from php_sentinel.intelligence.platform_security import (
+        PlatformSecurityCapabilityError,
+    )
+
+    path = tmp_path / "report.json"
+    path.write_text("{}", encoding="utf-8")
+
+    def deny(
+        *,
+        operation,
+    ):
+        raise PlatformSecurityCapabilityError(f"{operation} unavailable.")
+
+    monkeypatch.setattr(
+        compare_module,
+        "require_nofollow_open",
+        deny,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot provide no-follow open semantics",
+    ):
+        compare_module._read_report_bytes(path)

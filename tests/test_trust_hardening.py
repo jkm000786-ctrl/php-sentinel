@@ -472,3 +472,34 @@ def test_manifest_loader_rejects_oversized_file(
         match="maximum allowed size",
     ):
         load_manifest(path)
+
+
+def test_trust_store_reader_fails_closed_without_nofollow_capability(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.trust as trust_module
+    from php_sentinel.intelligence.platform_security import (
+        PlatformSecurityCapabilityError,
+    )
+
+    path = tmp_path / "trust.json"
+    path.write_text("{}", encoding="utf-8")
+
+    def deny(
+        *,
+        operation,
+    ):
+        raise PlatformSecurityCapabilityError(f"{operation} unavailable.")
+
+    monkeypatch.setattr(
+        trust_module,
+        "require_nofollow_open",
+        deny,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot provide no-follow open semantics",
+    ):
+        trust_module.load_trust_store(path)

@@ -389,3 +389,66 @@ def test_oversized_authority_key_file_fails_closed(
         match="maximum allowed size",
     ):
         load_authority_state_key(path)
+
+
+def test_key_mode_tightening_failure_is_best_effort(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.state_key as state_key_module
+
+    path = tmp_path / "state" / "authority-state.key.json"
+
+    def deny_fchmod(
+        descriptor,
+        mode,
+    ):
+        raise OSError("mode bits unsupported")
+
+    monkeypatch.setattr(
+        state_key_module.os,
+        "fchmod",
+        deny_fchmod,
+    )
+
+    generated = state_key_module.generate_authority_state_key(path)
+
+    assert generated.key
+    assert path.is_file()
+
+    loaded = state_key_module.load_authority_state_key(path)
+
+    assert loaded == generated
+
+
+def test_key_parent_directory_fsync_failure_is_best_effort(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.state_key as state_key_module
+
+    path = tmp_path / "state" / "authority-state.key.json"
+    real_fsync = state_key_module.os.fsync
+
+    def selective_fsync(descriptor):
+        status = state_key_module.os.fstat(descriptor)
+
+        if state_key_module.stat.S_ISDIR(status.st_mode):
+            raise OSError("directory fsync unsupported")
+
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        state_key_module.os,
+        "fsync",
+        selective_fsync,
+    )
+
+    generated = state_key_module.generate_authority_state_key(path)
+
+    assert generated.key
+    assert path.is_file()
+
+    loaded = state_key_module.load_authority_state_key(path)
+
+    assert loaded == generated

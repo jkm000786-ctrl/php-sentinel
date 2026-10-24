@@ -6,6 +6,11 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from php_sentinel.intelligence.platform_security import (
+    PlatformSecurityCapabilityError,
+    require_anchored_directory_traversal,
+)
+
 
 class DirectoryAnchorError(ValueError):
     """Raised when a directory path cannot be traversed without following links."""
@@ -18,12 +23,7 @@ class DirectoryAnchor:
 
 
 def _directory_flags() -> int:
-    return (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    return os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
 
 
 def _path_components(path: Path) -> tuple[bool, list[str]]:
@@ -138,6 +138,17 @@ def open_directory_anchor(
     parent descriptor. `..` is rejected rather than traversed.
     """
     directory = Path(path)
+
+    try:
+        require_anchored_directory_traversal(
+            operation="Anchored directory traversal",
+        )
+    except PlatformSecurityCapabilityError as exc:
+        raise DirectoryAnchorError(
+            "Anchored directory traversal is unavailable because the current "
+            "platform cannot provide the required filesystem security semantics."
+        ) from exc
+
     absolute, parts = _path_components(directory)
 
     descriptor = _open_start_descriptor(

@@ -19,6 +19,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from php_sentinel.intelligence.delegation import (
     resolve_authorized_predecessor_evidence,
 )
+from php_sentinel.intelligence.platform_security import (
+    PlatformSecurityCapabilityError,
+    require_nofollow_open,
+)
 from php_sentinel.intelligence.repository import (
     default_policy,
     load_policy,
@@ -115,13 +119,20 @@ def _read_trust_store_bytes(
 ) -> bytes:
     store_path = Path(path)
 
+    try:
+        require_nofollow_open(
+            operation="Trust-store read",
+        )
+    except PlatformSecurityCapabilityError as exc:
+        raise ValueError(
+            "Trust-store read is unavailable because the current platform "
+            "cannot provide no-follow open semantics."
+        ) from exc
+
     flags = os.O_RDONLY
 
-    for name in (
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= os.O_NOFOLLOW
 
     try:
         descriptor = os.open(
