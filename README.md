@@ -22,8 +22,10 @@ connected peer against the prevalidated DNS set, and still require independent
 manifest signature and lifecycle verification.
 
 See
-[`docs/29-registry-enforced-trusted-update-transport.md`](docs/29-registry-enforced-trusted-update-transport.md)
-for the Phase 24 transport and trust boundaries.
+[`docs/02-threat-model.md`](docs/02-threat-model.md)
+for the v1 threat model and
+[`docs/48-v1-security-review-threat-model-closure.md`](docs/48-v1-security-review-threat-model-closure.md)
+for the Phase 44 security review and residual-risk closure.
 
 ## WSL setup
 

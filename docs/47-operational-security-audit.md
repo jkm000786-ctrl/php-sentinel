@@ -229,9 +229,12 @@ Events represent completed operations.
 For example:
 
 - `update_staged` is emitted only after staged artifacts and metadata have been
-  written;
+  written; registry-selected staging emits the event only after `source_id` and
+  `channel` provenance have been attached to the stage metadata;
 - `update_verified` is emitted only after trust and lifecycle checks produce a
-  valid read-only candidate;
+  valid read-only candidate; registry-selected verification additionally
+  requires the manifest signer to pass the selected source/channel signer
+  authorization before the success event is emitted;
 - `update_promoted` is emitted after successful cache promotion, including an
   idempotent identical-cache result;
 - activation-accepted events are emitted only after their authoritative
