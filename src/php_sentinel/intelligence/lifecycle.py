@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
+import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -276,23 +278,81 @@ def lifecycle_state_lock(
             pass
 
 
+def _read_lifecycle_state_bytes(
+    state_path: Path,
+) -> bytes | None:
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            state_path,
+            flags,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise LifecycleStateStorageError(
+                f"Lifecycle-state file must not be a symbolic link: {state_path}."
+            ) from exc
+
+        raise LifecycleStateStorageError(
+            f"Lifecycle-state file could not be opened safely: {state_path}."
+        ) from exc
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise LifecycleStateStorageError(
+                f"Lifecycle-state path is not a regular file: {state_path}."
+            )
+
+        chunks: list[bytes] = []
+
+        while True:
+            chunk = os.read(
+                descriptor,
+                1024 * 1024,
+            )
+
+            if not chunk:
+                break
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
+
+
 def load_lifecycle_state(
     path: Path | str,
 ) -> LifecycleStateStore:
     state_path = Path(path)
 
-    if not state_path.exists():
-        return LifecycleStateStore()
-
     try:
-        raw = state_path.read_text(encoding="utf-8")
+        payload = _read_lifecycle_state_bytes(state_path)
 
-        data = json.loads(raw)
+        if payload is None:
+            return LifecycleStateStore()
+
+        data = json.loads(payload.decode("utf-8"))
 
         return LifecycleStateStore.model_validate(data)
 
+    except LifecycleStateStorageError:
+        raise
     except (
         OSError,
+        UnicodeDecodeError,
         ValueError,
         json.JSONDecodeError,
     ) as exc:
@@ -323,9 +383,17 @@ def _save_lifecycle_state_unlocked(
     descriptor: int | None = None
 
     try:
+        temporary_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_TRUNC
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+
         descriptor = os.open(
             temporary,
-            (os.O_WRONLY | os.O_CREAT | os.O_TRUNC),
+            temporary_flags,
             LIFECYCLE_STATE_FILE_MODE,
         )
 

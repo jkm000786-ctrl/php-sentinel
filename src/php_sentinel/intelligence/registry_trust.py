@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import json
 import os
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -528,21 +530,81 @@ def evaluate_source_registry_lifecycle(
     )
 
 
+def _read_source_registry_state_bytes(
+    state_path: Path,
+) -> bytes | None:
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            state_path,
+            flags,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise SourceRegistryStateStorageError(
+                "Source-registry state file must not be a symbolic link."
+            ) from exc
+
+        raise SourceRegistryStateStorageError(
+            "Source-registry state file could not be opened safely."
+        ) from exc
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise SourceRegistryStateStorageError(
+                "Source-registry state path is not a regular file."
+            )
+
+        chunks: list[bytes] = []
+
+        while True:
+            chunk = os.read(
+                descriptor,
+                1024 * 1024,
+            )
+
+            if not chunk:
+                break
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
+
+
 def load_source_registry_state(
     path: Path | str,
 ) -> SourceRegistryStateStore:
     state_path = Path(path)
 
-    if not state_path.exists():
-        return SourceRegistryStateStore()
-
     try:
-        data = json.loads(state_path.read_text(encoding="utf-8"))
+        payload = _read_source_registry_state_bytes(state_path)
+
+        if payload is None:
+            return SourceRegistryStateStore()
+
+        data = json.loads(payload.decode("utf-8"))
 
         return SourceRegistryStateStore.model_validate(data)
 
+    except SourceRegistryStateStorageError:
+        raise
     except (
         OSError,
+        UnicodeDecodeError,
         ValueError,
         json.JSONDecodeError,
     ) as exc:
@@ -622,9 +684,17 @@ def _save_source_registry_state_unlocked(
     descriptor: int | None = None
 
     try:
+        temporary_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_TRUNC
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+
         descriptor = os.open(
             temporary,
-            (os.O_WRONLY | os.O_CREAT | os.O_TRUNC),
+            temporary_flags,
             REGISTRY_STATE_FILE_MODE,
         )
 

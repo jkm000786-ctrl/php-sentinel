@@ -576,3 +576,82 @@ def test_source_registry_manifest_rejects_noncanonical_signer_identity():
             issued_at=NOW,
             expires_at=(NOW + timedelta(days=1)),
         )
+
+
+def test_source_registry_state_read_rejects_symlink(
+    tmp_path,
+):
+    from php_sentinel.intelligence.registry_trust import (
+        SourceRegistryStateStorageError,
+        load_source_registry_state,
+    )
+    from php_sentinel.models.registry_trust import (
+        SourceRegistryStateStore,
+    )
+
+    outside = tmp_path / "outside-registry-state.json"
+    outside.write_text(
+        json.dumps(SourceRegistryStateStore().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    state_path = tmp_path / "registry-state.json"
+    state_path.symlink_to(outside)
+
+    with pytest.raises(
+        SourceRegistryStateStorageError,
+        match="symbolic link",
+    ):
+        load_source_registry_state(state_path)
+
+
+def test_source_registry_state_read_rejects_non_regular_file(
+    tmp_path,
+):
+    from php_sentinel.intelligence.registry_trust import (
+        SourceRegistryStateStorageError,
+        load_source_registry_state,
+    )
+
+    state_path = tmp_path / "registry-state.json"
+    state_path.mkdir()
+
+    with pytest.raises(
+        SourceRegistryStateStorageError,
+        match="not a regular file",
+    ):
+        load_source_registry_state(state_path)
+
+
+def test_source_registry_state_write_rejects_symlinked_temporary_file(
+    tmp_path,
+):
+    from php_sentinel.intelligence.registry_trust import (
+        SourceRegistryStateStorageError,
+        save_source_registry_state,
+    )
+    from php_sentinel.models.registry_trust import (
+        SourceRegistryStateStore,
+    )
+
+    state_path = tmp_path / "registry-state.json"
+    temporary = state_path.with_suffix(state_path.suffix + ".tmp")
+
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        "do-not-modify",
+        encoding="utf-8",
+    )
+
+    temporary.symlink_to(outside)
+
+    with pytest.raises(
+        SourceRegistryStateStorageError,
+        match="durably persist",
+    ):
+        save_source_registry_state(
+            state_path,
+            SourceRegistryStateStore(),
+        )
+
+    assert outside.read_text(encoding="utf-8") == "do-not-modify"

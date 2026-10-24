@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import errno
 import json
+import os
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -102,10 +105,61 @@ def load_manifest(
     return parse_manifest_bytes(Path(path).read_bytes())
 
 
+def _read_trust_store_bytes(
+    path: Path | str,
+) -> bytes:
+    store_path = Path(path)
+
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            store_path,
+            flags,
+        )
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError(
+                f"Trust-store file must not be a symbolic link: {store_path}."
+            ) from exc
+
+        raise
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise ValueError(f"Trust-store path is not a regular file: {store_path}.")
+
+        chunks: list[bytes] = []
+
+        while True:
+            chunk = os.read(
+                descriptor,
+                1024 * 1024,
+            )
+
+            if not chunk:
+                break
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
+
+
 def load_trust_store(
     path: Path | str,
 ) -> TrustStore:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = json.loads(_read_trust_store_bytes(path).decode("utf-8"))
 
     return TrustStore.model_validate(data)
 

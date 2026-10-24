@@ -1,4 +1,5 @@
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -24,6 +25,7 @@ from php_sentinel.intelligence.repository import (
 from php_sentinel.intelligence.trust import (
     MANIFEST_SIGNATURE_DOMAIN_V3,
     create_signed_manifest,
+    load_trust_store,
     manifest_signing_bytes,
     resolve_policy_trust,
     verify_manifest,
@@ -379,3 +381,35 @@ def test_unapproved_signer_rotation_is_denied():
     assert decision.activatable is False
 
     assert decision.state.value == "signer_changed"
+
+
+def test_trust_store_read_rejects_symlink(
+    tmp_path,
+):
+    outside = tmp_path / "outside-trust.json"
+    outside.write_text(
+        json.dumps(TrustStore().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    trust_path = tmp_path / "trust.json"
+    trust_path.symlink_to(outside)
+
+    with pytest.raises(
+        ValueError,
+        match="symbolic link",
+    ):
+        load_trust_store(trust_path)
+
+
+def test_trust_store_read_rejects_non_regular_file(
+    tmp_path,
+):
+    trust_path = tmp_path / "trust.json"
+    trust_path.mkdir()
+
+    with pytest.raises(
+        ValueError,
+        match="not a regular file",
+    ):
+        load_trust_store(trust_path)

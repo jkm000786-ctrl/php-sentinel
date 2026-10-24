@@ -275,3 +275,61 @@ def test_lower_generation_cannot_overwrite_state(
     persisted = load_lifecycle_state(state_path)
 
     assert persisted.records[policy.policy_id].generation == 7
+
+
+def test_lifecycle_state_read_rejects_symlink(
+    tmp_path,
+):
+    outside = tmp_path / "outside-state.json"
+    outside.write_text(
+        json.dumps(LifecycleStateStore().model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    state_path = tmp_path / "lifecycle.json"
+    state_path.symlink_to(outside)
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="symbolic link",
+    ):
+        load_lifecycle_state(state_path)
+
+
+def test_lifecycle_state_read_rejects_non_regular_file(
+    tmp_path,
+):
+    state_path = tmp_path / "lifecycle.json"
+    state_path.mkdir()
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="not a regular file",
+    ):
+        load_lifecycle_state(state_path)
+
+
+def test_lifecycle_state_write_rejects_symlinked_temporary_file(
+    tmp_path,
+):
+    state_path = tmp_path / "lifecycle.json"
+    temporary = state_path.with_suffix(state_path.suffix + ".tmp")
+
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        "do-not-modify",
+        encoding="utf-8",
+    )
+
+    temporary.symlink_to(outside)
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="durably write",
+    ):
+        save_lifecycle_state(
+            state_path,
+            LifecycleStateStore(),
+        )
+
+    assert outside.read_text(encoding="utf-8") == "do-not-modify"
