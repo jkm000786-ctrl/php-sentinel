@@ -1604,6 +1604,7 @@ def activate_cached_intelligence(
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str,
     security_audit_path: Path | str | None = None,
+    expected_entry: IntelligenceVerifiedCacheEntry | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
     maximum_future_skew_seconds: int = 300,
@@ -1617,10 +1618,15 @@ def activate_cached_intelligence(
     """
 
     (
-        _,
+        inspected_entry,
         policy,
         manifest,
     ) = _inspect_verified_cache_entry_bundle(cache_directory)
+
+    if expected_entry is not None and inspected_entry != expected_entry:
+        raise IntelligenceVerifiedCacheError(
+            "Verified cache entry changed after selection and before activation."
+        )
 
     return activate_verified_intelligence_objects(
         policy=policy,

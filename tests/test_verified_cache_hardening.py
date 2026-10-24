@@ -1069,3 +1069,62 @@ def test_verified_cache_discovery_rejects_excessive_raw_entry_count(
         match="too many filesystem entries",
     ):
         update_module.discover_verified_cache(root)
+
+
+def test_expected_cache_entry_change_blocks_activation_before_state_commit(
+    tmp_path,
+    monkeypatch,
+):
+    from php_sentinel.intelligence import update as update_module
+    from php_sentinel.intelligence.update import (
+        IntelligenceVerifiedCacheError,
+        activate_cached_intelligence,
+        inspect_verified_cache_entry,
+    )
+
+    (
+        _,
+        _,
+        cache_directory,
+        _,
+        trust_path,
+        _,
+        _,
+    ) = create_cached_entry(
+        tmp_path,
+        generation=5,
+    )
+    state_path = tmp_path / "lifecycle.json"
+
+    expected = inspect_verified_cache_entry(cache_directory)
+
+    original = update_module._inspect_verified_cache_entry_bundle
+
+    def changed_entry(path):
+        entry, policy, manifest = original(path)
+        changed = entry.model_copy(
+            update={
+                "bundle_sha256": ("0" * 64),
+            }
+        )
+        return changed, policy, manifest
+
+    monkeypatch.setattr(
+        update_module,
+        "_inspect_verified_cache_entry_bundle",
+        changed_entry,
+    )
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="changed after selection and before activation",
+    ):
+        activate_cached_intelligence(
+            cache_directory=cache_directory,
+            trust_store_path=trust_path,
+            lifecycle_state_path=state_path,
+            expected_entry=expected,
+            now=NOW,
+        )
+
+    assert not state_path.exists()

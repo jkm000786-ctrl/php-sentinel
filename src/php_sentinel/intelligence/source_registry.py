@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -288,7 +288,7 @@ def stage_registry_bundle_from_registry(
         policy_url=selection.policy_url,
         manifest_url=(selection.manifest_url),
         staging_directory=(staging_directory),
-        security_audit_path=security_audit_path,
+        security_audit_path=None,
         timeout_seconds=(timeout_seconds),
         maximum_bytes=(maximum_bytes),
         client=client,
@@ -308,6 +308,33 @@ def stage_registry_bundle_from_registry(
         Path(staging_directory) / "stage-metadata.json",
         metadata.model_dump(mode="json"),
     )
+
+    if security_audit_path is not None:
+        from php_sentinel.intelligence.security_audit import (
+            SecurityAuditStorageError,
+            append_security_audit_event,
+        )
+        from php_sentinel.models.security_audit import (
+            SecurityAuditEvent,
+            SecurityAuditEventType,
+            SecurityAuditOutcome,
+        )
+
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=(now or datetime.now(UTC)),
+                    event_type=SecurityAuditEventType.UPDATE_STAGED,
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.source_registry",
+                    operation="stage_registry_bundle_from_registry",
+                    source_id=source_id,
+                    channel=channel,
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
 
     return metadata
 
@@ -413,7 +440,7 @@ def verify_registry_staged_bundle_from_registry(
         staging_directory=(staging_directory),
         trust_store_path=(trust_store_path),
         lifecycle_state_path=(lifecycle_state_path),
-        security_audit_path=security_audit_path,
+        security_audit_path=None,
         minimum_generation=(effective_minimum),
         maximum_age_days=(maximum_age_days),
         maximum_future_skew_seconds=(maximum_future_skew_seconds),
@@ -424,6 +451,39 @@ def verify_registry_staged_bundle_from_registry(
         raise IntelligenceSourceRegistryError(
             f"Manifest signer is trusted globally but is not authorized for source {source_id!r}."
         )
+
+    if security_audit_path is not None:
+        from php_sentinel.intelligence.security_audit import (
+            SecurityAuditStorageError,
+            append_security_audit_event,
+        )
+        from php_sentinel.models.security_audit import (
+            SecurityAuditEvent,
+            SecurityAuditEventType,
+            SecurityAuditOutcome,
+        )
+
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=(now or datetime.now(UTC)),
+                    event_type=SecurityAuditEventType.UPDATE_VERIFIED,
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.source_registry",
+                    operation="verify_registry_staged_bundle_from_registry",
+                    policy_id=candidate.policy.policy_id,
+                    signer_id=candidate.manifest.signer_id,
+                    source_id=source_id,
+                    channel=channel,
+                    generation=candidate.manifest.generation,
+                    trust_state=candidate.trust.state.value,
+                    lifecycle_state=candidate.lifecycle.state.value,
+                    policy_sha256=candidate.verification_metadata.policy_sha256,
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
 
     return candidate
 
@@ -599,16 +659,12 @@ def activate_registry_cached_intelligence_from_registry(
         trust_store_path=(trust_store_path),
         lifecycle_state_path=(lifecycle_state_path),
         security_audit_path=security_audit_path,
+        expected_entry=entry,
         minimum_generation=(effective_minimum),
         maximum_age_days=(maximum_age_days),
         maximum_future_skew_seconds=(maximum_future_skew_seconds),
         now=now,
     )
-
-    if activated.trust.signer_id not in selection.allowed_signer_ids:
-        raise IntelligenceSourceRegistryError(
-            "Activated signer is not authorized by the selected source."
-        )
 
     return (
         entry,
