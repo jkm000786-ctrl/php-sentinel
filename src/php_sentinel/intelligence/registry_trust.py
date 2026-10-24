@@ -20,6 +20,10 @@ from php_sentinel.intelligence.delegation import (
     resolve_verified_delegation_revocations,
     signer_delegation_revocation_sha256,
 )
+from php_sentinel.intelligence.format_governance import (
+    AuthorityFormatKind,
+    require_current_writable_format,
+)
 from php_sentinel.intelligence.lifecycle import (
     _close_state_directory,
     _directory_fsync_anchor,
@@ -821,6 +825,16 @@ def save_source_registry_state(
     *,
     authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
+    try:
+        require_current_writable_format(
+            AuthorityFormatKind.REGISTRY_STATE_STORE,
+            state.store_version,
+        )
+    except ValueError as exc:
+        raise SourceRegistryStateStorageError(
+            "Source-registry persistence requires the current writable store format."
+        ) from exc
+
     with lifecycle_state_lock(path) as anchor:
         _save_source_registry_state_unlocked(
             path,

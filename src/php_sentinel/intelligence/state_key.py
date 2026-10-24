@@ -8,6 +8,10 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from php_sentinel.intelligence.format_governance import (
+    AuthorityFormatKind,
+    require_current_writable_format,
+)
 from php_sentinel.intelligence.path_anchor import (
     DirectoryAnchor,
     DirectoryAnchorError,
@@ -225,6 +229,16 @@ def generate_authority_state_key(
         key_id=key_id,
         key_b64=base64.b64encode(key).decode("ascii"),
     )
+
+    try:
+        require_current_writable_format(
+            AuthorityFormatKind.AUTHORITY_KEY_FILE,
+            record.key_file_version,
+        )
+    except ValueError as exc:
+        raise AuthorityStateKeyStorageError(
+            "Authority-state key generation requires the current writable key-file format."
+        ) from exc
 
     payload = _canonical_key_record_bytes(record)
 

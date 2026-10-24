@@ -9,6 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from php_sentinel.intelligence.format_governance import (
+    AuthorityFormatKind,
+    require_current_writable_format,
+)
 from php_sentinel.models.state_auth import AuthorityStateEnvelope
 
 AUTHORITY_STATE_AUTH_DOMAIN_V1 = b"PHP-SENTINEL-AUTHORITY-STATE-HMAC-V1\x00"
@@ -105,6 +109,11 @@ def create_authority_state_envelope(
         key_id=key_id,
         state=normalized_state,
         mac_b64=placeholder,
+    )
+
+    require_current_writable_format(
+        AuthorityFormatKind.AUTHORITY_STATE_ENVELOPE,
+        envelope.auth_version,
     )
 
     mac = hmac.new(

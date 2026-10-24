@@ -14,6 +14,10 @@ from pathlib import Path
 from php_sentinel.intelligence.delegation import (
     signer_delegation_revocation_sha256,
 )
+from php_sentinel.intelligence.format_governance import (
+    AuthorityFormatKind,
+    require_current_writable_format,
+)
 from php_sentinel.intelligence.path_anchor import (
     DirectoryAnchorError,
     open_directory_anchor,
@@ -753,6 +757,16 @@ def save_lifecycle_state(
     *,
     authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
+    try:
+        require_current_writable_format(
+            AuthorityFormatKind.LIFECYCLE_STATE_STORE,
+            state.store_version,
+        )
+    except ValueError as exc:
+        raise LifecycleStateStorageError(
+            "Lifecycle-state persistence requires the current writable store format."
+        ) from exc
+
     with lifecycle_state_lock(path) as anchor:
         _save_lifecycle_state_unlocked(
             path,
