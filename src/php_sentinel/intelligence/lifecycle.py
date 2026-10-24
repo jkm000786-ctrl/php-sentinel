@@ -149,24 +149,90 @@ def _temporary_path(
     return state_path.with_suffix(state_path.suffix + ".tmp")
 
 
-def _lock_owner_is_alive(
+def _open_lock_snapshot(
     lock_path: Path,
-) -> bool:
+) -> tuple[int, os.stat_result] | None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+
     try:
-        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        descriptor = os.open(
+            lock_path,
+            flags,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise LifecycleStateStorageError(
+                f"Lifecycle-state lock must not be a symbolic link: {lock_path}."
+            ) from exc
+
+        raise LifecycleStateStorageError(
+            f"Lifecycle-state lock could not be opened safely: {lock_path}."
+        ) from exc
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise LifecycleStateStorageError(
+                f"Lifecycle-state lock is not a regular file: {lock_path}."
+            )
+
+        return descriptor, status
+
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _read_lock_owner_pid(
+    descriptor: int,
+) -> int | None:
+    try:
+        os.lseek(
+            descriptor,
+            0,
+            os.SEEK_SET,
+        )
+
+        chunks: list[bytes] = []
+
+        while True:
+            chunk = os.read(
+                descriptor,
+                64 * 1024,
+            )
+
+            if not chunk:
+                break
+
+            chunks.append(chunk)
+
+        data = json.loads(b"".join(chunks).decode("utf-8"))
 
         pid = int(data["pid"])
 
     except (
         OSError,
+        UnicodeDecodeError,
         KeyError,
         TypeError,
         ValueError,
         json.JSONDecodeError,
     ):
-        return False
+        return None
 
     if pid <= 0:
+        return None
+
+    return pid
+
+
+def _lock_owner_pid_is_alive(
+    pid: int | None,
+) -> bool:
+    if pid is None:
         return False
 
     try:
@@ -185,28 +251,81 @@ def _lock_owner_is_alive(
     return True
 
 
-def _remove_stale_lock_if_safe(
-    lock_path: Path,
+def _same_file_identity(
+    left: os.stat_result,
+    right: os.stat_result,
 ) -> bool:
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def _current_lock_status(
+    lock_path: Path,
+) -> os.stat_result | None:
     try:
-        stat_result = lock_path.stat()
+        return os.stat(
+            lock_path,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _unlink_lock_if_identity_matches(
+    lock_path: Path,
+    expected_status: os.stat_result,
+) -> bool:
+    current_status = _current_lock_status(lock_path)
+
+    if current_status is None:
+        return True
+
+    if not stat.S_ISREG(current_status.st_mode):
+        raise LifecycleStateStorageError(
+            f"Lifecycle-state lock is not a regular file: {lock_path}."
+        )
+
+    if not _same_file_identity(
+        expected_status,
+        current_status,
+    ):
+        return False
+
+    try:
+        os.unlink(lock_path)
     except FileNotFoundError:
         return True
 
-    age = time.time() - stat_result.st_mtime
+    return True
 
-    if age < LIFECYCLE_STALE_LOCK_SECONDS:
-        return False
 
-    if _lock_owner_is_alive(lock_path):
-        return False
+def _remove_stale_lock_if_safe(
+    lock_path: Path,
+) -> bool:
+    snapshot = _open_lock_snapshot(lock_path)
+
+    if snapshot is None:
+        return True
+
+    descriptor, opened_status = snapshot
 
     try:
-        lock_path.unlink()
-    except FileNotFoundError:
-        pass
+        age = time.time() - opened_status.st_mtime
 
-    return True
+        if age < LIFECYCLE_STALE_LOCK_SECONDS:
+            return False
+
+        owner_pid = _read_lock_owner_pid(descriptor)
+
+        if _lock_owner_pid_is_alive(owner_pid):
+            return False
+
+        return _unlink_lock_if_identity_matches(
+            lock_path,
+            opened_status,
+        )
+
+    finally:
+        os.close(descriptor)
 
 
 @contextmanager
@@ -224,14 +343,30 @@ def lifecycle_state_lock(
     deadline = time.monotonic() + timeout_seconds
 
     descriptor: int | None = None
+    acquired_status: os.stat_result | None = None
 
     while descriptor is None:
         try:
+            lock_flags = (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+
             descriptor = os.open(
                 lock_path,
-                (os.O_WRONLY | os.O_CREAT | os.O_EXCL),
+                lock_flags,
                 LIFECYCLE_STATE_FILE_MODE,
             )
+
+            acquired_status = os.fstat(descriptor)
+
+            if not stat.S_ISREG(acquired_status.st_mode):
+                raise LifecycleStateStorageError(
+                    f"Lifecycle-state lock is not a regular file: {lock_path}."
+                )
 
         except FileExistsError:
             if _remove_stale_lock_if_safe(lock_path):
@@ -248,7 +383,7 @@ def lifecycle_state_lock(
         payload = json.dumps(
             {
                 "pid": os.getpid(),
-                "created_at": (datetime.now(UTC).isoformat()),
+                "created_at": datetime.now(UTC).isoformat(),
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -261,7 +396,6 @@ def lifecycle_state_lock(
         os.fsync(descriptor)
 
         os.close(descriptor)
-
         descriptor = None
 
         _secure_file(lock_path)
@@ -272,10 +406,11 @@ def lifecycle_state_lock(
         if descriptor is not None:
             os.close(descriptor)
 
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        if acquired_status is not None:
+            _unlink_lock_if_identity_matches(
+                lock_path,
+                acquired_status,
+            )
 
 
 def _read_lifecycle_state_bytes(

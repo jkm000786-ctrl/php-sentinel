@@ -2,6 +2,7 @@ import json
 import os
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -333,3 +334,159 @@ def test_lifecycle_state_write_rejects_symlinked_temporary_file(
         )
 
     assert outside.read_text(encoding="utf-8") == "do-not-modify"
+
+
+def test_symlinked_lock_fails_closed(
+    tmp_path,
+):
+    state_path = tmp_path / "lifecycle.json"
+    lock_path = _lock_path(state_path)
+
+    outside = tmp_path / "outside.lock"
+    outside.write_text(
+        json.dumps(
+            {
+                "pid": 99999999,
+                "created_at": NOW.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    stale_time = time.time() - LIFECYCLE_STALE_LOCK_SECONDS - 5
+
+    os.utime(
+        outside,
+        (
+            stale_time,
+            stale_time,
+        ),
+    )
+
+    lock_path.symlink_to(outside)
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="symbolic link",
+    ):
+        save_lifecycle_state(
+            state_path,
+            LifecycleStateStore(),
+        )
+
+    assert lock_path.is_symlink()
+    assert outside.exists()
+
+
+def test_non_regular_lock_fails_closed(
+    tmp_path,
+):
+    state_path = tmp_path / "lifecycle.json"
+    lock_path = _lock_path(state_path)
+
+    lock_path.mkdir()
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="not a regular file",
+    ):
+        save_lifecycle_state(
+            state_path,
+            LifecycleStateStore(),
+        )
+
+
+def test_stale_lock_replacement_is_not_unlinked(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.lifecycle as lifecycle_module
+
+    state_path = tmp_path / "lifecycle.json"
+    lock_path = _lock_path(state_path)
+
+    lock_path.write_text(
+        json.dumps(
+            {
+                "pid": 99999999,
+                "created_at": NOW.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    stale_time = time.time() - LIFECYCLE_STALE_LOCK_SECONDS - 5
+
+    os.utime(
+        lock_path,
+        (
+            stale_time,
+            stale_time,
+        ),
+    )
+
+    real_current_status = lifecycle_module._current_lock_status
+    replaced = False
+
+    def replace_before_identity_check(path):
+        nonlocal replaced
+
+        if Path(path) == lock_path and not replaced:
+            replaced = True
+
+            lock_path.unlink()
+
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "pid": os.getpid(),
+                        "created_at": NOW.isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        return real_current_status(path)
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        "_current_lock_status",
+        replace_before_identity_check,
+    )
+
+    removed = lifecycle_module._remove_stale_lock_if_safe(lock_path)
+
+    assert removed is False
+    assert lock_path.exists()
+
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+
+    assert payload["pid"] == os.getpid()
+
+
+def test_lock_cleanup_does_not_unlink_replacement(
+    tmp_path,
+):
+    state_path = tmp_path / "lifecycle.json"
+    lock_path = _lock_path(state_path)
+
+    with lifecycle_state_lock(state_path):
+        lock_path.unlink()
+
+        lock_path.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "created_at": NOW.isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    assert lock_path.exists()
+
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+
+    assert payload["pid"] == os.getpid()
+
+    lock_path.unlink()
