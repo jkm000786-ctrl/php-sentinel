@@ -21,6 +21,13 @@ from php_sentinel.intelligence.delegation import (
     signer_delegation_revocation_sha256,
 )
 from php_sentinel.intelligence.lifecycle import (
+    _close_state_directory,
+    _directory_fsync_anchor,
+    _open_state_directory,
+    _read_descriptor_bytes,
+    _state_temporary_name,
+    _StateDirectoryAnchor,
+    _unlink_relative_if_identity_matches,
     lifecycle_state_lock,
 )
 from php_sentinel.intelligence.source_registry import (
@@ -532,66 +539,79 @@ def evaluate_source_registry_lifecycle(
 
 def _read_source_registry_state_bytes(
     state_path: Path,
+    *,
+    _anchor: _StateDirectoryAnchor | None = None,
 ) -> bytes | None:
-    flags = os.O_RDONLY
+    anchor = _anchor
+    owns_anchor = False
 
-    for name in (
-        "O_CLOEXEC",
-        "O_NOFOLLOW",
-    ):
-        flags |= getattr(os, name, 0)
-
-    try:
-        descriptor = os.open(
-            state_path,
-            flags,
-        )
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
+    if anchor is None:
+        try:
+            anchor = _open_state_directory(
+                state_path,
+                create=False,
+            )
+        except Exception as exc:
             raise SourceRegistryStateStorageError(
-                "Source-registry state file must not be a symbolic link."
+                "Source-registry state directory could not be opened safely."
             ) from exc
 
-        raise SourceRegistryStateStorageError(
-            "Source-registry state file could not be opened safely."
-        ) from exc
+        if anchor is None:
+            return None
+
+        owns_anchor = True
 
     try:
-        status = os.fstat(descriptor)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
-        if not stat.S_ISREG(status.st_mode):
+        try:
+            descriptor = os.open(
+                anchor.state_name,
+                flags,
+                dir_fd=anchor.directory_fd,
+            )
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise SourceRegistryStateStorageError(
+                    "Source-registry state file must not be a symbolic link."
+                ) from exc
+
             raise SourceRegistryStateStorageError(
-                "Source-registry state path is not a regular file."
-            )
+                "Source-registry state file could not be opened safely."
+            ) from exc
 
-        chunks: list[bytes] = []
+        try:
+            status = os.fstat(descriptor)
 
-        while True:
-            chunk = os.read(
-                descriptor,
-                1024 * 1024,
-            )
+            if not stat.S_ISREG(status.st_mode):
+                raise SourceRegistryStateStorageError(
+                    "Source-registry state path is not a regular file."
+                )
 
-            if not chunk:
-                break
+            return _read_descriptor_bytes(descriptor)
 
-            chunks.append(chunk)
-
-        return b"".join(chunks)
+        finally:
+            os.close(descriptor)
 
     finally:
-        os.close(descriptor)
+        if owns_anchor:
+            _close_state_directory(anchor)
 
 
 def load_source_registry_state(
     path: Path | str,
+    *,
+    _anchor: _StateDirectoryAnchor | None = None,
 ) -> SourceRegistryStateStore:
     state_path = Path(path)
 
     try:
-        payload = _read_source_registry_state_bytes(state_path)
+        payload = _read_source_registry_state_bytes(
+            state_path,
+            _anchor=_anchor,
+        )
 
         if payload is None:
             return SourceRegistryStateStore()
@@ -613,64 +633,36 @@ def load_source_registry_state(
         ) from exc
 
 
-def _secure_registry_directory(
-    directory: Path,
-) -> None:
-    directory.mkdir(
-        parents=True,
-        exist_ok=True,
-        mode=REGISTRY_STATE_DIRECTORY_MODE,
-    )
-
-    try:
-        directory.chmod(REGISTRY_STATE_DIRECTORY_MODE)
-    except OSError:
-        pass
-
-
-def _secure_registry_file(
-    path: Path,
-) -> None:
-    try:
-        path.chmod(REGISTRY_STATE_FILE_MODE)
-    except OSError:
-        pass
-
-
-def _directory_fsync(
-    directory: Path,
-) -> None:
-    flags = os.O_RDONLY
-
-    if hasattr(
-        os,
-        "O_DIRECTORY",
-    ):
-        flags |= os.O_DIRECTORY
-
-    try:
-        descriptor = os.open(
-            directory,
-            flags,
-        )
-    except OSError:
-        return
-
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def _save_source_registry_state_unlocked(
     path: Path | str,
     state: SourceRegistryStateStore,
+    *,
+    _anchor: _StateDirectoryAnchor | None = None,
 ) -> None:
     state_path = Path(path)
 
-    _secure_registry_directory(state_path.parent)
+    anchor = _anchor
+    owns_anchor = False
 
-    temporary = state_path.with_suffix(state_path.suffix + ".tmp")
+    if anchor is None:
+        try:
+            anchor = _open_state_directory(
+                state_path,
+                create=True,
+            )
+        except Exception as exc:
+            raise SourceRegistryStateStorageError(
+                "Source-registry state directory could not be opened safely."
+            ) from exc
+
+        if anchor is None:
+            raise SourceRegistryStateStorageError(
+                "Source-registry state directory could not be opened safely."
+            )
+
+        owns_anchor = True
+
+    temporary_name = _state_temporary_name(anchor.state_name)
 
     payload = (
         json.dumps(
@@ -682,21 +674,38 @@ def _save_source_registry_state_unlocked(
     ).encode("utf-8")
 
     descriptor: int | None = None
+    temporary_status: os.stat_result | None = None
 
     try:
         temporary_flags = (
             os.O_WRONLY
             | os.O_CREAT
-            | os.O_TRUNC
+            | os.O_EXCL
             | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_NOFOLLOW", 0)
         )
 
         descriptor = os.open(
-            temporary,
+            temporary_name,
             temporary_flags,
             REGISTRY_STATE_FILE_MODE,
+            dir_fd=anchor.directory_fd,
         )
+
+        temporary_status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(temporary_status.st_mode):
+            raise SourceRegistryStateStorageError(
+                "Source-registry temporary state object is not a regular file."
+            )
+
+        try:
+            os.fchmod(
+                descriptor,
+                REGISTRY_STATE_FILE_MODE,
+            )
+        except OSError:
+            pass
 
         with os.fdopen(
             descriptor,
@@ -706,21 +715,19 @@ def _save_source_registry_state_unlocked(
             descriptor = None
 
             handle.write(payload)
-
             handle.flush()
-
             os.fsync(handle.fileno())
 
-        _secure_registry_file(temporary)
-
-        os.replace(
-            temporary,
-            state_path,
+        os.rename(
+            temporary_name,
+            anchor.state_name,
+            src_dir_fd=anchor.directory_fd,
+            dst_dir_fd=anchor.directory_fd,
         )
 
-        _secure_registry_file(state_path)
+        temporary_status = None
 
-        _directory_fsync(state_path.parent)
+        _directory_fsync_anchor(anchor)
 
     except OSError as exc:
         raise SourceRegistryStateStorageError(
@@ -731,20 +738,32 @@ def _save_source_registry_state_unlocked(
         if descriptor is not None:
             os.close(descriptor)
 
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+        if temporary_status is not None:
+            try:
+                _unlink_relative_if_identity_matches(
+                    anchor,
+                    temporary_name,
+                    temporary_status,
+                    description="Source-registry temporary state file",
+                )
+            except Exception as exc:
+                raise SourceRegistryStateStorageError(
+                    "Failed to safely clean source-registry temporary state."
+                ) from exc
+
+        if owns_anchor:
+            _close_state_directory(anchor)
 
 
 def save_source_registry_state(
     path: Path | str,
     state: SourceRegistryStateStore,
 ) -> None:
-    with lifecycle_state_lock(path):
+    with lifecycle_state_lock(path) as anchor:
         _save_source_registry_state_unlocked(
             path,
             state,
+            _anchor=anchor,
         )
 
 
@@ -757,8 +776,11 @@ def record_observed_source_registry_revocations(
 ) -> SourceRegistryStateStore:
     observed_at = now or datetime.now(UTC)
 
-    with lifecycle_state_lock(path):
-        current = load_source_registry_state(path)
+    with lifecycle_state_lock(path) as anchor:
+        current = load_source_registry_state(
+            path,
+            _anchor=anchor,
+        )
 
         if current.model_dump(mode="json") != expected_state.model_dump(mode="json"):
             raise SourceRegistryStateStorageError(
@@ -804,6 +826,7 @@ def record_observed_source_registry_revocations(
         _save_source_registry_state_unlocked(
             path,
             updated,
+            _anchor=anchor,
         )
 
         return updated
@@ -823,8 +846,11 @@ def record_accepted_source_registry(
 
     accepted_at = now or datetime.now(UTC)
 
-    with lifecycle_state_lock(path):
-        current = load_source_registry_state(path)
+    with lifecycle_state_lock(path) as anchor:
+        current = load_source_registry_state(
+            path,
+            _anchor=anchor,
+        )
 
         if current.model_dump(mode="json") != expected_state.model_dump(mode="json"):
             raise SourceRegistryStateStorageError(
@@ -865,8 +891,9 @@ def record_accepted_source_registry(
                         "Refusing to persist an older registry delegation sequence."
                     )
 
-                if lifecycle.rotation_delegation_sequence == historical.sequence and (
-                    lifecycle.rotation_delegation_sha256 != historical.delegation_sha256
+                if (
+                    lifecycle.rotation_delegation_sequence == historical.sequence
+                    and lifecycle.rotation_delegation_sha256 != historical.delegation_sha256
                 ):
                     raise SourceRegistryStateStorageError(
                         "Refusing same-sequence registry delegation digest replacement."
@@ -888,6 +915,7 @@ def record_accepted_source_registry(
         _save_source_registry_state_unlocked(
             path,
             updated,
+            _anchor=anchor,
         )
 
         return updated

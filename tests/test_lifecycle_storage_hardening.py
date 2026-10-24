@@ -2,7 +2,6 @@ import json
 import os
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -425,13 +424,16 @@ def test_stale_lock_replacement_is_not_unlinked(
         ),
     )
 
-    real_current_status = lifecycle_module._current_lock_status
+    real_relative_status = lifecycle_module._relative_status
     replaced = False
 
-    def replace_before_identity_check(path):
+    def replace_before_identity_check(
+        anchor,
+        name,
+    ):
         nonlocal replaced
 
-        if Path(path) == lock_path and not replaced:
+        if name == lock_path.name and not replaced:
             replaced = True
 
             lock_path.unlink()
@@ -446,15 +448,31 @@ def test_stale_lock_replacement_is_not_unlinked(
                 encoding="utf-8",
             )
 
-        return real_current_status(path)
+        return real_relative_status(
+            anchor,
+            name,
+        )
 
     monkeypatch.setattr(
         lifecycle_module,
-        "_current_lock_status",
+        "_relative_status",
         replace_before_identity_check,
     )
 
-    removed = lifecycle_module._remove_stale_lock_if_safe(lock_path)
+    anchor = lifecycle_module._open_state_directory(
+        state_path,
+        create=False,
+    )
+
+    assert anchor is not None
+
+    try:
+        removed = lifecycle_module._remove_stale_lock_if_safe(
+            anchor,
+            lock_path.name,
+        )
+    finally:
+        lifecycle_module._close_state_directory(anchor)
 
     assert removed is False
     assert lock_path.exists()
@@ -490,3 +508,41 @@ def test_lock_cleanup_does_not_unlink_replacement(
     assert payload["pid"] == os.getpid()
 
     lock_path.unlink()
+
+
+def test_lock_and_state_write_remain_bound_to_open_directory(
+    tmp_path,
+):
+    import php_sentinel.intelligence.lifecycle as lifecycle_module
+
+    state_directory = tmp_path / "state"
+    state_path = state_directory / "lifecycle.json"
+
+    replacement_payload = "replacement-directory-state"
+
+    with lifecycle_state_lock(state_path) as anchor:
+        displaced_directory = tmp_path / "state-original"
+
+        state_directory.rename(displaced_directory)
+        state_directory.mkdir()
+
+        replacement_state = state_directory / "lifecycle.json"
+        replacement_state.write_text(
+            replacement_payload,
+            encoding="utf-8",
+        )
+
+        lifecycle_module._save_lifecycle_state_unlocked(
+            state_path,
+            LifecycleStateStore(),
+            _anchor=anchor,
+        )
+
+    persisted_original = displaced_directory / "lifecycle.json"
+
+    assert persisted_original.exists()
+    assert replacement_state.read_text(encoding="utf-8") == replacement_payload
+
+    loaded = load_lifecycle_state(persisted_original)
+
+    assert loaded == LifecycleStateStore()

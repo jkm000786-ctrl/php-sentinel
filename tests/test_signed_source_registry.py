@@ -655,3 +655,48 @@ def test_source_registry_state_write_rejects_symlinked_temporary_file(
         )
 
     assert outside.read_text(encoding="utf-8") == "do-not-modify"
+
+
+def test_source_registry_state_write_remains_bound_to_open_directory(
+    tmp_path,
+):
+    import php_sentinel.intelligence.registry_trust as registry_module
+    from php_sentinel.intelligence.lifecycle import lifecycle_state_lock
+    from php_sentinel.intelligence.registry_trust import (
+        load_source_registry_state,
+    )
+    from php_sentinel.models.registry_trust import (
+        SourceRegistryStateStore,
+    )
+
+    state_directory = tmp_path / "registry-state"
+    state_path = state_directory / "registry.json"
+
+    replacement_payload = "replacement-registry-state"
+
+    with lifecycle_state_lock(state_path) as anchor:
+        displaced_directory = tmp_path / "registry-state-original"
+
+        state_directory.rename(displaced_directory)
+        state_directory.mkdir()
+
+        replacement_state = state_directory / "registry.json"
+        replacement_state.write_text(
+            replacement_payload,
+            encoding="utf-8",
+        )
+
+        registry_module._save_source_registry_state_unlocked(
+            state_path,
+            SourceRegistryStateStore(),
+            _anchor=anchor,
+        )
+
+    persisted_original = displaced_directory / "registry.json"
+
+    assert persisted_original.exists()
+    assert replacement_state.read_text(encoding="utf-8") == replacement_payload
+
+    loaded = load_source_registry_state(persisted_original)
+
+    assert loaded == SourceRegistryStateStore()
