@@ -17,6 +17,10 @@ from php_sentinel.intelligence.repository import (
     default_policy,
     load_policy,
 )
+from php_sentinel.intelligence.state_key import (
+    authority_state_key_path_for_state,
+    load_or_create_authority_state_key,
+)
 from php_sentinel.intelligence.trust import (
     bundled_policy_trust,
     load_manifest,
@@ -127,9 +131,18 @@ def activate_loaded_intelligence_with_lifecycle(
             )
 
         state = None
+        authority_key = None
 
         if lifecycle_state_path is not None:
-            state = load_lifecycle_state(lifecycle_state_path)
+            authority_key = load_or_create_authority_state_key(
+                authority_state_key_path_for_state(lifecycle_state_path)
+            )
+
+            state = load_lifecycle_state(
+                lifecycle_state_path,
+                authority_key=authority_key,
+                require_authenticated=True,
+            )
 
         lifecycle_policy = IntelligenceLifecyclePolicy(
             minimum_generation=minimum_generation,
@@ -151,6 +164,8 @@ def activate_loaded_intelligence_with_lifecycle(
                     revocations=revocations,
                     expected_state=state,
                     now=now,
+                    authority_key=authority_key,
+                    require_authenticated=True,
                 )
 
         lifecycle = evaluate_lifecycle(
@@ -174,6 +189,8 @@ def activate_loaded_intelligence_with_lifecycle(
                 lifecycle=lifecycle,
                 expected_state=state,
                 now=now,
+                authority_key=authority_key,
+                require_authenticated=True,
             )
 
         return (

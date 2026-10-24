@@ -20,6 +20,10 @@ from php_sentinel.intelligence.repository import (
     default_policy,
     policy_sha256,
 )
+from php_sentinel.intelligence.state_key import (
+    authority_state_key_path_for_state,
+    load_or_create_authority_state_key,
+)
 from php_sentinel.intelligence.trust import (
     create_signed_manifest,
 )
@@ -451,6 +455,10 @@ def test_activation_rereads_lifecycle_and_blocks_rollback(
 
     state_path = tmp_path / "lifecycle.json"
 
+    authority_key = load_or_create_authority_state_key(
+        authority_state_key_path_for_state(state_path)
+    )
+
     save_lifecycle_state(
         state_path,
         LifecycleStateStore(
@@ -465,6 +473,7 @@ def test_activation_rereads_lifecycle_and_blocks_rollback(
                 )
             }
         ),
+        authority_key=authority_key,
     )
 
     with pytest.raises(

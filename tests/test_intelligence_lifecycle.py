@@ -14,10 +14,16 @@ from php_sentinel.intelligence.activation import (
 )
 from php_sentinel.intelligence.lifecycle import (
     evaluate_lifecycle,
+    load_lifecycle_state,
+    save_lifecycle_state,
 )
 from php_sentinel.intelligence.repository import (
     default_policy,
     policy_sha256,
+)
+from php_sentinel.intelligence.state_key import (
+    authority_state_key_path_for_state,
+    load_authority_state_key,
 )
 from php_sentinel.intelligence.trust import (
     create_signed_manifest,
@@ -387,6 +393,17 @@ def test_persistent_state_blocks_rollback(
     assert lifecycle.activatable is True
     assert lifecycle.generation == 5
 
+    authority_key_path = authority_state_key_path_for_state(state_path)
+    authority_key = load_authority_state_key(authority_key_path)
+
+    persisted = load_lifecycle_state(
+        state_path,
+        authority_key=authority_key,
+        require_authenticated=True,
+    )
+
+    assert persisted.records[policy.policy_id].generation == 5
+
     older = create_signed_manifest(
         policy=policy,
         signer_id="state-signer",
@@ -410,6 +427,69 @@ def test_persistent_state_blocks_rollback(
         activate_intelligence_with_lifecycle(
             policy_path=policy_path,
             manifest_path=older_path,
+            trust_store_path=trust_path,
+            lifecycle_state_path=state_path,
+            now=NOW,
+        )
+
+
+def test_authoritative_activation_rejects_unsigned_legacy_state(
+    tmp_path,
+):
+    private_b64, public_b64 = key_material()
+
+    policy = default_policy().model_copy(deep=True)
+
+    store = TrustStore(
+        signers=[
+            TrustedSigner(
+                signer_id="state-signer",
+                public_key_b64=public_b64,
+            )
+        ]
+    )
+
+    policy_path = tmp_path / "policy.json"
+    manifest_path = tmp_path / "manifest.json"
+    trust_path = tmp_path / "trust.json"
+    state_path = tmp_path / "lifecycle.json"
+
+    policy_path.write_text(
+        json.dumps(policy.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    trust_path.write_text(
+        json.dumps(store.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    manifest = create_signed_manifest(
+        policy=policy,
+        signer_id="state-signer",
+        private_key_b64=private_b64,
+        issued_at=NOW,
+        generation=5,
+        expires_at=(NOW + timedelta(days=10)),
+    )
+
+    manifest_path.write_text(
+        json.dumps(manifest.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    save_lifecycle_state(
+        state_path,
+        LifecycleStateStore(),
+    )
+
+    with pytest.raises(
+        IntelligenceActivationError,
+        match="not an authenticated authority-state envelope",
+    ):
+        activate_intelligence_with_lifecycle(
+            policy_path=policy_path,
+            manifest_path=manifest_path,
             trust_store_path=trust_path,
             lifecycle_state_path=state_path,
             now=NOW,

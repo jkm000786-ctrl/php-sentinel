@@ -36,6 +36,17 @@ from php_sentinel.intelligence.source_registry import (
     stage_registry_bundle_from_registry,
     verify_registry_staged_bundle_from_registry,
 )
+from php_sentinel.intelligence.state_auth import (
+    AuthorityStateAuthenticationError,
+    canonical_authority_state_envelope_bytes,
+    create_authority_state_envelope,
+    verify_authority_state_envelope,
+)
+from php_sentinel.intelligence.state_key import (
+    LoadedAuthorityStateKey,
+    authority_state_key_path_for_state,
+    load_or_create_authority_state_key,
+)
 from php_sentinel.intelligence.trust import load_trust_store
 from php_sentinel.models.intelligence_lifecycle import (
     DelegationHistoryRecord,
@@ -54,6 +65,7 @@ from php_sentinel.models.registry_trust import (
     SourceRegistryTrustDecision,
     SourceRegistryTrustState,
 )
+from php_sentinel.models.state_auth import AuthorityStateEnvelope
 
 REGISTRY_SIGNATURE_DOMAIN_V1 = b"PHP-SENTINEL-SOURCE-REGISTRY-MANIFEST-V1\x00"
 
@@ -604,6 +616,8 @@ def load_source_registry_state(
     path: Path | str,
     *,
     _anchor: _StateDirectoryAnchor | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
+    require_authenticated: bool = False,
 ) -> SourceRegistryStateStore:
     state_path = Path(path)
 
@@ -618,10 +632,46 @@ def load_source_registry_state(
 
         data = json.loads(payload.decode("utf-8"))
 
-        return SourceRegistryStateStore.model_validate(data)
+        if authority_key is None:
+            if isinstance(data, dict) and (
+                "auth_version" in data or "mac_b64" in data or "context" in data or "key_id" in data
+            ):
+                raise SourceRegistryStateStorageError(
+                    "Source-registry state is authenticated but no local authority-state key was supplied."
+                )
+
+            if require_authenticated:
+                raise SourceRegistryStateStorageError(
+                    "Authenticated source-registry state requires a local authority-state key."
+                )
+
+            return SourceRegistryStateStore.model_validate(data)
+
+        try:
+            envelope = AuthorityStateEnvelope.model_validate(data)
+        except ValueError as exc:
+            if require_authenticated:
+                raise SourceRegistryStateStorageError(
+                    "Source-registry state is not an authenticated authority-state envelope."
+                ) from exc
+
+            return SourceRegistryStateStore.model_validate(data)
+
+        verified_state = verify_authority_state_envelope(
+            envelope,
+            expected_context="registry",
+            expected_key_id=authority_key.key_id,
+            key=authority_key.key,
+        )
+
+        return SourceRegistryStateStore.model_validate(verified_state)
 
     except SourceRegistryStateStorageError:
         raise
+    except AuthorityStateAuthenticationError as exc:
+        raise SourceRegistryStateStorageError(
+            "Source-registry state authentication failed."
+        ) from exc
     except (
         OSError,
         UnicodeDecodeError,
@@ -638,6 +688,7 @@ def _save_source_registry_state_unlocked(
     state: SourceRegistryStateStore,
     *,
     _anchor: _StateDirectoryAnchor | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
     state_path = Path(path)
 
@@ -664,14 +715,23 @@ def _save_source_registry_state_unlocked(
 
     temporary_name = _state_temporary_name(anchor.state_name)
 
-    payload = (
-        json.dumps(
-            state.model_dump(mode="json"),
-            indent=2,
-            sort_keys=True,
+    if authority_key is None:
+        payload = (
+            json.dumps(
+                state.model_dump(mode="json"),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+    else:
+        envelope = create_authority_state_envelope(
+            context="registry",
+            key_id=authority_key.key_id,
+            key=authority_key.key,
+            state=state,
         )
-        + "\n"
-    ).encode("utf-8")
+        payload = canonical_authority_state_envelope_bytes(envelope)
 
     descriptor: int | None = None
     temporary_status: os.stat_result | None = None
@@ -758,13 +818,76 @@ def _save_source_registry_state_unlocked(
 def save_source_registry_state(
     path: Path | str,
     state: SourceRegistryStateStore,
+    *,
+    authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
     with lifecycle_state_lock(path) as anchor:
         _save_source_registry_state_unlocked(
             path,
             state,
             _anchor=anchor,
+            authority_key=authority_key,
         )
+
+
+def migrate_source_registry_state_to_authenticated(
+    path: Path | str,
+    *,
+    authority_key: LoadedAuthorityStateKey,
+) -> SourceRegistryStateStore:
+    """
+    Explicitly migrate one existing unsigned source-registry state file into
+    an authenticated authority-state envelope.
+
+    Migration is never implicit during signed-registry activation.
+    """
+    state_path = Path(path)
+
+    with lifecycle_state_lock(state_path) as anchor:
+        payload = _read_source_registry_state_bytes(
+            state_path,
+            _anchor=anchor,
+        )
+
+        if payload is None:
+            raise SourceRegistryStateStorageError(
+                "No legacy source-registry state file exists to migrate."
+            )
+
+        try:
+            data = json.loads(payload.decode("utf-8"))
+        except (
+            UnicodeDecodeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise SourceRegistryStateStorageError(
+                "Source-registry state is unreadable, malformed, or unsupported."
+            ) from exc
+
+        if isinstance(data, dict) and (
+            "auth_version" in data or "mac_b64" in data or "context" in data or "key_id" in data
+        ):
+            raise SourceRegistryStateStorageError(
+                "Source-registry state migration requires legacy unsigned state; "
+                "the file already uses an authenticated authority-state envelope."
+            )
+
+        try:
+            state = SourceRegistryStateStore.model_validate(data)
+        except ValueError as exc:
+            raise SourceRegistryStateStorageError(
+                "Source-registry state is unreadable, malformed, or unsupported."
+            ) from exc
+
+        _save_source_registry_state_unlocked(
+            state_path,
+            state,
+            _anchor=anchor,
+            authority_key=authority_key,
+        )
+
+        return state
 
 
 def record_observed_source_registry_revocations(
@@ -773,6 +896,8 @@ def record_observed_source_registry_revocations(
     revocations,
     expected_state: SourceRegistryStateStore,
     now: datetime | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
+    require_authenticated: bool = False,
 ) -> SourceRegistryStateStore:
     observed_at = now or datetime.now(UTC)
 
@@ -780,6 +905,8 @@ def record_observed_source_registry_revocations(
         current = load_source_registry_state(
             path,
             _anchor=anchor,
+            authority_key=authority_key,
+            require_authenticated=require_authenticated,
         )
 
         if current.model_dump(mode="json") != expected_state.model_dump(mode="json"):
@@ -827,6 +954,7 @@ def record_observed_source_registry_revocations(
             path,
             updated,
             _anchor=anchor,
+            authority_key=authority_key,
         )
 
         return updated
@@ -840,6 +968,8 @@ def record_accepted_source_registry(
     lifecycle: SourceRegistryLifecycleDecision,
     expected_state: SourceRegistryStateStore,
     now: datetime | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
+    require_authenticated: bool = False,
 ) -> SourceRegistryStateStore:
     if not lifecycle.activatable:
         raise SourceRegistryStateStorageError("Cannot record a non-activatable source registry.")
@@ -850,6 +980,8 @@ def record_accepted_source_registry(
         current = load_source_registry_state(
             path,
             _anchor=anchor,
+            authority_key=authority_key,
+            require_authenticated=require_authenticated,
         )
 
         if current.model_dump(mode="json") != expected_state.model_dump(mode="json"):
@@ -916,6 +1048,7 @@ def record_accepted_source_registry(
             path,
             updated,
             _anchor=anchor,
+            authority_key=authority_key,
         )
 
         return updated
@@ -1013,7 +1146,15 @@ def activate_signed_source_registry(
             f"Source-registry trust verification failed: {trust.state.value}."
         )
 
-    state = load_source_registry_state(registry_state_path)
+    authority_key = load_or_create_authority_state_key(
+        authority_state_key_path_for_state(registry_state_path)
+    )
+
+    state = load_source_registry_state(
+        registry_state_path,
+        authority_key=authority_key,
+        require_authenticated=True,
+    )
 
     revocations = resolve_verified_delegation_revocations(
         trust_store=trust_store,
@@ -1028,6 +1169,8 @@ def activate_signed_source_registry(
             revocations=revocations,
             expected_state=state,
             now=now,
+            authority_key=authority_key,
+            require_authenticated=True,
         )
 
     lifecycle = evaluate_source_registry_lifecycle(
@@ -1062,6 +1205,8 @@ def activate_signed_source_registry(
         lifecycle=lifecycle,
         expected_state=state,
         now=now,
+        authority_key=authority_key,
+        require_authenticated=True,
     )
 
     return verified

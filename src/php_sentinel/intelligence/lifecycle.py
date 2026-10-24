@@ -17,6 +17,13 @@ from php_sentinel.intelligence.delegation import (
 from php_sentinel.intelligence.repository import (
     policy_sha256,
 )
+from php_sentinel.intelligence.state_auth import (
+    AuthorityStateAuthenticationError,
+    canonical_authority_state_envelope_bytes,
+    create_authority_state_envelope,
+    verify_authority_state_envelope,
+)
+from php_sentinel.intelligence.state_key import LoadedAuthorityStateKey
 from php_sentinel.models.intelligence_lifecycle import (
     DelegationHistoryRecord,
     DelegationRevocationHistoryRecord,
@@ -33,6 +40,7 @@ from php_sentinel.models.intelligence_trust import (
     IntelligenceManifest,
     IntelligenceTrustDecision,
 )
+from php_sentinel.models.state_auth import AuthorityStateEnvelope
 
 DEFAULT_LIFECYCLE_STATE_PATH = (
     Path.home() / ".local" / "state" / "php-sentinel" / "intelligence-lifecycle.json"
@@ -594,6 +602,8 @@ def load_lifecycle_state(
     path: Path | str,
     *,
     _anchor: _StateDirectoryAnchor | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
+    require_authenticated: bool = False,
 ) -> LifecycleStateStore:
     state_path = Path(path)
 
@@ -608,10 +618,44 @@ def load_lifecycle_state(
 
         data = json.loads(payload.decode("utf-8"))
 
-        return LifecycleStateStore.model_validate(data)
+        if authority_key is None:
+            if isinstance(data, dict) and (
+                "auth_version" in data or "mac_b64" in data or "context" in data or "key_id" in data
+            ):
+                raise LifecycleStateStorageError(
+                    "Lifecycle-state file is authenticated but no local authority-state key was supplied."
+                )
+
+            if require_authenticated:
+                raise LifecycleStateStorageError(
+                    "Authenticated lifecycle state requires a local authority-state key."
+                )
+
+            return LifecycleStateStore.model_validate(data)
+
+        try:
+            envelope = AuthorityStateEnvelope.model_validate(data)
+        except ValueError as exc:
+            if require_authenticated:
+                raise LifecycleStateStorageError(
+                    "Lifecycle-state file is not an authenticated authority-state envelope."
+                ) from exc
+
+            return LifecycleStateStore.model_validate(data)
+
+        verified_state = verify_authority_state_envelope(
+            envelope,
+            expected_context="lifecycle",
+            expected_key_id=authority_key.key_id,
+            key=authority_key.key,
+        )
+
+        return LifecycleStateStore.model_validate(verified_state)
 
     except LifecycleStateStorageError:
         raise
+    except AuthorityStateAuthenticationError as exc:
+        raise LifecycleStateStorageError("Lifecycle-state authentication failed.") from exc
     except (
         OSError,
         UnicodeDecodeError,
@@ -628,6 +672,7 @@ def _save_lifecycle_state_unlocked(
     state: LifecycleStateStore,
     *,
     _anchor: _StateDirectoryAnchor | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
     state_path = Path(path)
 
@@ -650,14 +695,23 @@ def _save_lifecycle_state_unlocked(
     temporary_name = _state_temporary_name(anchor.state_name)
     temporary_path = state_path.parent / temporary_name
 
-    payload = (
-        json.dumps(
-            state.model_dump(mode="json"),
-            indent=2,
-            sort_keys=True,
+    if authority_key is None:
+        payload = (
+            json.dumps(
+                state.model_dump(mode="json"),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+    else:
+        envelope = create_authority_state_envelope(
+            context="lifecycle",
+            key_id=authority_key.key_id,
+            key=authority_key.key,
+            state=state,
         )
-        + "\n"
-    ).encode("utf-8")
+        payload = canonical_authority_state_envelope_bytes(envelope)
 
     descriptor: int | None = None
     temporary_status: os.stat_result | None = None
@@ -739,13 +793,77 @@ def _save_lifecycle_state_unlocked(
 def save_lifecycle_state(
     path: Path | str,
     state: LifecycleStateStore,
+    *,
+    authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
     with lifecycle_state_lock(path) as anchor:
         _save_lifecycle_state_unlocked(
             path,
             state,
             _anchor=anchor,
+            authority_key=authority_key,
         )
+
+
+def migrate_lifecycle_state_to_authenticated(
+    path: Path | str,
+    *,
+    authority_key: LoadedAuthorityStateKey,
+) -> LifecycleStateStore:
+    """
+    Explicitly migrate one existing unsigned lifecycle-state file into an
+    authenticated authority-state envelope.
+
+    Migration is never implicit during activation. The same descriptor-anchored
+    lock/read/write transaction used by normal lifecycle mutation is retained.
+    """
+    state_path = Path(path)
+
+    with lifecycle_state_lock(state_path) as anchor:
+        payload = _read_lifecycle_state_bytes(
+            state_path,
+            _anchor=anchor,
+        )
+
+        if payload is None:
+            raise LifecycleStateStorageError(
+                f"No legacy lifecycle-state file exists to migrate: {state_path}."
+            )
+
+        try:
+            data = json.loads(payload.decode("utf-8"))
+        except (
+            UnicodeDecodeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise LifecycleStateStorageError(
+                f"Lifecycle-state file is unreadable, malformed, or unsupported: {state_path}."
+            ) from exc
+
+        if isinstance(data, dict) and (
+            "auth_version" in data or "mac_b64" in data or "context" in data or "key_id" in data
+        ):
+            raise LifecycleStateStorageError(
+                "Lifecycle-state migration requires legacy unsigned state; "
+                "the file already uses an authenticated authority-state envelope."
+            )
+
+        try:
+            state = LifecycleStateStore.model_validate(data)
+        except ValueError as exc:
+            raise LifecycleStateStorageError(
+                f"Lifecycle-state file is unreadable, malformed, or unsupported: {state_path}."
+            ) from exc
+
+        _save_lifecycle_state_unlocked(
+            state_path,
+            state,
+            _anchor=anchor,
+            authority_key=authority_key,
+        )
+
+        return state
 
 
 def evaluate_lifecycle(
@@ -955,11 +1073,18 @@ def record_observed_delegation_revocations(
     revocations,
     expected_state: LifecycleStateStore | None = None,
     now: datetime | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
+    require_authenticated: bool = False,
 ) -> LifecycleStateStore:
     observed_at = now or datetime.now(UTC)
 
     with lifecycle_state_lock(path) as anchor:
-        current_state = load_lifecycle_state(path, _anchor=anchor)
+        current_state = load_lifecycle_state(
+            path,
+            _anchor=anchor,
+            authority_key=authority_key,
+            require_authenticated=require_authenticated,
+        )
 
         if expected_state is not None and current_state.model_dump(
             mode="json"
@@ -1009,6 +1134,7 @@ def record_observed_delegation_revocations(
             path,
             updated,
             _anchor=anchor,
+            authority_key=authority_key,
         )
 
         return updated
@@ -1021,12 +1147,19 @@ def record_accepted_lifecycle(
     lifecycle: IntelligenceLifecycleDecision,
     expected_state: LifecycleStateStore | None = None,
     now: datetime | None = None,
+    authority_key: LoadedAuthorityStateKey | None = None,
+    require_authenticated: bool = False,
 ) -> None:
     if not lifecycle.activatable or lifecycle.generation is None or lifecycle.signer_id is None:
         raise ValueError("Only an activatable external lifecycle decision can be recorded.")
 
     with lifecycle_state_lock(path) as anchor:
-        current_state = load_lifecycle_state(path, _anchor=anchor)
+        current_state = load_lifecycle_state(
+            path,
+            _anchor=anchor,
+            authority_key=authority_key,
+            require_authenticated=require_authenticated,
+        )
 
         if expected_state is not None and current_state.model_dump(
             mode="json"
@@ -1096,6 +1229,7 @@ def record_accepted_lifecycle(
             path,
             current_state,
             _anchor=anchor,
+            authority_key=authority_key,
         )
 
 

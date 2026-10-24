@@ -18,12 +18,17 @@ from php_sentinel.intelligence.registry_trust import (
     load_source_registry_state,
     record_accepted_source_registry,
     registry_manifest_signing_bytes,
+    save_source_registry_state,
     source_registry_sha256,
     verify_signed_source_registry,
     verify_source_registry_manifest,
 )
 from php_sentinel.intelligence.repository import (
     default_policy,
+)
+from php_sentinel.intelligence.state_key import (
+    authority_state_key_path_for_state,
+    load_authority_state_key,
 )
 from php_sentinel.intelligence.trust import (
     create_signed_manifest,
@@ -459,6 +464,7 @@ def test_registry_verification_does_not_advance_state(
 
     assert verified.lifecycle.activatable is True
     assert not state_path.exists()
+    assert not authority_state_key_path_for_state(state_path).exists()
 
 
 def test_registry_activation_records_generation(
@@ -487,7 +493,14 @@ def test_registry_activation_records_generation(
         now=NOW,
     )
 
-    state = load_source_registry_state(state_path)
+    authority_key_path = authority_state_key_path_for_state(state_path)
+    authority_key = load_authority_state_key(authority_key_path)
+
+    state = load_source_registry_state(
+        state_path,
+        authority_key=authority_key,
+        require_authenticated=True,
+    )
 
     record = state.records[verified.manifest.registry_id]
 
@@ -700,3 +713,39 @@ def test_source_registry_state_write_remains_bound_to_open_directory(
     loaded = load_source_registry_state(persisted_original)
 
     assert loaded == SourceRegistryStateStore()
+
+
+def test_registry_activation_rejects_unsigned_legacy_state(
+    tmp_path,
+):
+    (
+        _,
+        _,
+        registry_path,
+        manifest_path,
+        trust_path,
+        _,
+        _,
+    ) = write_signed_registry(
+        tmp_path,
+        generation=5,
+    )
+
+    state_path = tmp_path / "registry-state.json"
+
+    save_source_registry_state(
+        state_path,
+        SourceRegistryStateStore(),
+    )
+
+    with pytest.raises(
+        SourceRegistryVerificationError,
+        match="not an authenticated authority-state envelope",
+    ):
+        activate_signed_source_registry(
+            registry_path=registry_path,
+            manifest_path=manifest_path,
+            registry_trust_store_path=trust_path,
+            registry_state_path=state_path,
+            now=NOW,
+        )
