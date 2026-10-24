@@ -8,6 +8,7 @@ import pytest
 
 from php_sentinel.intelligence.state_key import (
     AUTHORITY_KEY_FILE_MODE,
+    AuthorityStateKeyNotFoundError,
     AuthorityStateKeyStorageError,
     generate_authority_state_key,
     load_authority_state_key,
@@ -287,3 +288,85 @@ def test_nested_key_directories_are_created_component_by_component(
 
     assert loaded == created
     assert loaded.key_id == "nested-authority"
+
+
+def test_missing_key_uses_specific_not_found_error(
+    tmp_path,
+):
+    path = tmp_path / "missing-authority-state.key.json"
+
+    with pytest.raises(
+        AuthorityStateKeyNotFoundError,
+        match="does not exist",
+    ):
+        load_authority_state_key(path)
+
+
+def test_load_or_create_creates_only_when_key_is_missing(
+    tmp_path,
+):
+    path = tmp_path / "authority-state.key.json"
+
+    created = load_or_create_authority_state_key(
+        path,
+        key_id="created-from-missing",
+    )
+
+    loaded = load_authority_state_key(path)
+
+    assert loaded == created
+    assert loaded.key_id == "created-from-missing"
+
+
+def test_load_or_create_does_not_replace_malformed_existing_key(
+    tmp_path,
+):
+    path = tmp_path / "authority-state.key.json"
+
+    original = b"{not-valid-json"
+    path.write_bytes(original)
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="malformed or unsupported",
+    ):
+        load_or_create_authority_state_key(path)
+
+    assert path.read_bytes() == original
+
+
+def test_load_or_create_does_not_replace_symlinked_key(
+    tmp_path,
+):
+    target = tmp_path / "real-key.json"
+    target.write_text(
+        "{not-valid-json",
+        encoding="utf-8",
+    )
+
+    link = tmp_path / "authority-state.key.json"
+    link.symlink_to(target)
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="symbolic link|opened safely",
+    ):
+        load_or_create_authority_state_key(link)
+
+    assert link.is_symlink()
+    assert target.read_text(encoding="utf-8") == "{not-valid-json"
+
+
+def test_load_or_create_does_not_replace_non_regular_key(
+    tmp_path,
+):
+    path = tmp_path / "authority-state.key.json"
+    path.mkdir()
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="regular file|opened safely",
+    ):
+        load_or_create_authority_state_key(path)
+
+    assert path.is_dir()

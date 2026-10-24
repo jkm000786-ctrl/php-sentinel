@@ -29,6 +29,10 @@ class AuthorityStateKeyStorageError(ValueError):
     """Raised when local authority-state key storage is unsafe or invalid."""
 
 
+class AuthorityStateKeyNotFoundError(AuthorityStateKeyStorageError):
+    """Raised only when the authority-state key file is genuinely absent."""
+
+
 def authority_state_key_path_for_state(
     state_path: Path | str,
 ) -> Path:
@@ -104,7 +108,7 @@ def _read_authority_key_bytes(
                 dir_fd=anchor.descriptor,
             )
         except FileNotFoundError:
-            raise AuthorityStateKeyStorageError(
+            raise AuthorityStateKeyNotFoundError(
                 f"Authority-state key file does not exist: {path}."
             ) from None
         except OSError as exc:
@@ -316,15 +320,15 @@ def load_or_create_authority_state_key(
         return load_authority_state_key(
             key_path,
         )
-    except AuthorityStateKeyStorageError:
+    except AuthorityStateKeyNotFoundError:
         try:
             return generate_authority_state_key(
                 key_path,
                 key_id=key_id,
             )
         except AuthorityStateKeyStorageError:
-            # Creation may have raced with another process. Re-read only after
-            # exclusive creation failed.
+            # Exclusive creation may have raced with another process. Re-read
+            # only after the original state was confirmed genuinely absent.
             return load_authority_state_key(
                 key_path,
             )
