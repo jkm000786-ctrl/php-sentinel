@@ -61,12 +61,17 @@ cache-directory descriptor with no-follow semantics where available.
 Existing cache-entry comparisons during promotion now use the same
 descriptor-bound bounded reader instead of direct `Path.read_bytes()` calls.
 
-Cache discovery limits visible cache directories to:
+Cache discovery applies two independent ceilings:
 
-- 2048 entries
+- 2048 visible candidate cache directories;
+- 4096 total filesystem entries encountered while scanning the cache root.
 
-The limit is enforced incrementally during directory iteration rather than
-after materializing an arbitrary number of entries.
+The raw filesystem-entry ceiling is evaluated before filtering hidden entries,
+non-directories, or symbolic links. This prevents ignored filesystem objects
+from forcing an unbounded cache-root scan.
+
+Both ceilings are enforced incrementally during directory iteration rather
+than after materializing an arbitrary number of entries.
 
 Discovery remains structural only. It does not establish signer trust or
 lifecycle acceptance.

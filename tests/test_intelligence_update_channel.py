@@ -701,3 +701,109 @@ def test_stage_reader_fails_closed_without_nofollow_capability(
             path,
             maximum_bytes=1024,
         )
+
+
+def test_verification_uses_exact_integrity_snapshot_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.update as update_module
+
+    (
+        expected_policy,
+        _,
+        _,
+        stage,
+        trust_path,
+        state_path,
+    ) = stage_valid_bundle(tmp_path)
+
+    real_validate = update_module._validate_staged_transport_integrity
+
+    def validate_then_swap(
+        staging_directory,
+        metadata,
+    ):
+        snapshot = real_validate(
+            staging_directory,
+            metadata,
+        )
+
+        (stage / "policy.json").write_bytes(b"{}")
+
+        return snapshot
+
+    monkeypatch.setattr(
+        update_module,
+        "_validate_staged_transport_integrity",
+        validate_then_swap,
+    )
+
+    candidate = update_module.verify_staged_bundle(
+        staging_directory=stage,
+        trust_store_path=trust_path,
+        lifecycle_state_path=state_path,
+        now=NOW,
+    )
+
+    assert candidate.policy.policy_id == expected_policy.policy_id
+    assert (stage / "policy.json").read_bytes() == b"{}"
+
+
+def test_promotion_uses_exact_integrity_snapshot_bytes(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.update as update_module
+
+    (
+        _,
+        _,
+        _,
+        stage,
+        trust_path,
+        state_path,
+    ) = stage_valid_bundle(tmp_path)
+
+    candidate = update_module.verify_staged_bundle(
+        staging_directory=stage,
+        trust_store_path=trust_path,
+        lifecycle_state_path=state_path,
+        now=NOW,
+    )
+
+    expected_policy_bytes = (stage / "policy.json").read_bytes()
+    expected_manifest_bytes = (stage / "manifest.json").read_bytes()
+
+    real_validate = update_module._validate_staged_transport_integrity
+
+    def validate_then_swap(
+        staging_directory,
+        metadata,
+    ):
+        snapshot = real_validate(
+            staging_directory,
+            metadata,
+        )
+
+        (stage / "policy.json").write_bytes(b"{}")
+        (stage / "manifest.json").write_bytes(b"{}")
+
+        return snapshot
+
+    monkeypatch.setattr(
+        update_module,
+        "_validate_staged_transport_integrity",
+        validate_then_swap,
+    )
+
+    destination = update_module.promote_verified_candidate(
+        candidate=candidate,
+        verified_root=tmp_path / "verified",
+    )
+
+    assert (destination / "policy.json").read_bytes() == expected_policy_bytes
+    assert (destination / "manifest.json").read_bytes() == expected_manifest_bytes
+
+    assert (stage / "policy.json").read_bytes() == b"{}"
+    assert (stage / "manifest.json").read_bytes() == b"{}"

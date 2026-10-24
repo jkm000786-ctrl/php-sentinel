@@ -1041,3 +1041,31 @@ def test_cache_inspection_fails_closed_when_platform_descriptor_security_is_miss
         match="cannot provide the required descriptor security semantics",
     ):
         update_module.inspect_verified_cache_entry(entry)
+
+
+def test_verified_cache_discovery_rejects_excessive_raw_entry_count(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.update as update_module
+
+    monkeypatch.setattr(
+        update_module,
+        "VERIFIED_CACHE_MAX_DIRECTORY_ENTRIES",
+        3,
+    )
+
+    root = tmp_path / "verified"
+    root.mkdir()
+
+    for index in range(4):
+        (root / f".ignored-{index}").write_text(
+            "noise",
+            encoding="utf-8",
+        )
+
+    with pytest.raises(
+        update_module.IntelligenceVerifiedCacheError,
+        match="too many filesystem entries",
+    ):
+        update_module.discover_verified_cache(root)

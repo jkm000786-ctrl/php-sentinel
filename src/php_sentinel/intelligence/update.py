@@ -29,12 +29,10 @@ from php_sentinel.intelligence.platform_security import (
     require_verified_cache_descriptor_access,
 )
 from php_sentinel.intelligence.repository import (
-    load_policy,
     parse_policy_bytes,
     policy_sha256,
 )
 from php_sentinel.intelligence.trust import (
-    load_manifest,
     load_trust_store,
     parse_manifest_bytes,
     verify_manifest,
@@ -63,6 +61,7 @@ STAGE_METADATA_MAX_BYTES = 256 * 1024
 STAGED_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
 VERIFIED_CACHE_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
 VERIFIED_CACHE_MAX_ENTRIES = 2048
+VERIFIED_CACHE_MAX_DIRECTORY_ENTRIES = 4096
 
 STAGED_POLICY_FILENAME = "policy.json"
 STAGED_MANIFEST_FILENAME = "manifest.json"
@@ -782,15 +781,15 @@ def verify_staged_bundle(
 
     metadata = load_stage_metadata(stage)
 
-    _validate_staged_transport_integrity(
+    policy_bytes, manifest_bytes = _validate_staged_transport_integrity(
         stage,
         metadata,
     )
 
     try:
-        policy = load_policy(stage / STAGED_POLICY_FILENAME)
+        policy = parse_policy_bytes(policy_bytes)
 
-        manifest = load_manifest(stage / STAGED_MANIFEST_FILENAME)
+        manifest = parse_manifest_bytes(manifest_bytes)
 
         trust_store = load_trust_store(trust_store_path)
 
@@ -910,9 +909,9 @@ def promote_verified_candidate(
         raise IntelligenceUpdatePromotionError("Staged update metadata changed after verification.")
 
     try:
-        reparsed_policy = load_policy(stage / STAGED_POLICY_FILENAME)
+        reparsed_policy = parse_policy_bytes(policy_bytes)
 
-        reparsed_manifest = load_manifest(stage / STAGED_MANIFEST_FILENAME)
+        reparsed_manifest = parse_manifest_bytes(manifest_bytes)
 
     except (
         OSError,
@@ -1380,8 +1379,16 @@ def discover_verified_cache(
     entries: list[IntelligenceVerifiedCacheEntry] = []
 
     visible_directories: list[Path] = []
+    directory_entries_seen = 0
 
     for item in root.iterdir():
+        directory_entries_seen += 1
+
+        if directory_entries_seen > VERIFIED_CACHE_MAX_DIRECTORY_ENTRIES:
+            raise IntelligenceVerifiedCacheError(
+                "Verified cache contains too many filesystem entries to scan safely."
+            )
+
         if item.is_symlink() or not item.is_dir() or item.name.startswith("."):
             continue
 
