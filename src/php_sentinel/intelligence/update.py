@@ -32,6 +32,10 @@ from php_sentinel.intelligence.repository import (
     parse_policy_bytes,
     policy_sha256,
 )
+from php_sentinel.intelligence.security_audit import (
+    SecurityAuditStorageError,
+    append_security_audit_event,
+)
 from php_sentinel.intelligence.trust import (
     load_trust_store,
     parse_manifest_bytes,
@@ -53,6 +57,11 @@ from php_sentinel.models.intelligence_update import (
     IntelligenceUpdateStageMetadata,
     IntelligenceUpdateVerificationMetadata,
     IntelligenceVerifiedCacheEntry,
+)
+from php_sentinel.models.security_audit import (
+    SecurityAuditEvent,
+    SecurityAuditEventType,
+    SecurityAuditOutcome,
 )
 
 DEFAULT_UPDATE_MAX_BYTES = 2 * 1024 * 1024
@@ -515,6 +524,7 @@ def stage_remote_bundle(
     policy_url: str,
     manifest_url: str,
     staging_directory: Path | str,
+    security_audit_path: Path | str | None = None,
     timeout_seconds: float = DEFAULT_UPDATE_TIMEOUT_SECONDS,
     maximum_bytes: int = DEFAULT_UPDATE_MAX_BYTES,
     client: httpx.Client | None = None,
@@ -604,6 +614,23 @@ def stage_remote_bundle(
         stage / STAGE_METADATA_FILENAME,
         metadata.model_dump(mode="json"),
     )
+
+    if security_audit_path is not None:
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=(now or datetime.now(UTC)),
+                    event_type=SecurityAuditEventType.UPDATE_STAGED,
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.update",
+                    operation="stage_remote_bundle",
+                    source_id=metadata.source_id,
+                    channel=metadata.channel,
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
 
     return metadata
 
@@ -765,6 +792,7 @@ def verify_staged_bundle(
     staging_directory: Path | str,
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
     maximum_future_skew_seconds: int = 300,
@@ -859,7 +887,7 @@ def verify_staged_bundle(
         staged_manifest_transport_sha256=(metadata.manifest_transport_sha256),
     )
 
-    return VerifiedUpdateCandidate(
+    candidate = VerifiedUpdateCandidate(
         policy=policy,
         manifest=manifest,
         trust=trust,
@@ -870,6 +898,31 @@ def verify_staged_bundle(
         verification_metadata=(verification),
         _capability=(_UPDATE_CAPABILITY),
     )
+
+    if security_audit_path is not None:
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=(now or datetime.now(UTC)),
+                    event_type=SecurityAuditEventType.UPDATE_VERIFIED,
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.update",
+                    operation="verify_staged_bundle",
+                    policy_id=policy.policy_id,
+                    signer_id=manifest.signer_id,
+                    source_id=metadata.source_id,
+                    channel=metadata.channel,
+                    generation=manifest.generation,
+                    trust_state=trust.state.value,
+                    lifecycle_state=lifecycle.state.value,
+                    policy_sha256=verification.policy_sha256,
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
+
+    return candidate
 
 
 def _candidate_cache_name(
@@ -888,6 +941,7 @@ def promote_verified_candidate(
     *,
     candidate: VerifiedUpdateCandidate,
     verified_root: Path | str,
+    security_audit_path: Path | str | None = None,
 ) -> Path:
     """
     Promote a verified staged bundle into an immutable verified cache.
@@ -1007,6 +1061,30 @@ def promote_verified_candidate(
             ) from exc
 
         if existing_policy_bytes == policy_bytes and existing_manifest_bytes == manifest_bytes:
+            if security_audit_path is not None:
+                try:
+                    append_security_audit_event(
+                        security_audit_path,
+                        SecurityAuditEvent(
+                            occurred_at=datetime.now(UTC),
+                            event_type=SecurityAuditEventType.UPDATE_PROMOTED,
+                            outcome=SecurityAuditOutcome.SUCCEEDED,
+                            component="intelligence.update",
+                            operation="promote_verified_candidate",
+                            policy_id=candidate.policy.policy_id,
+                            signer_id=candidate.manifest.signer_id,
+                            source_id=candidate.verification_metadata.source_id,
+                            channel=candidate.verification_metadata.channel,
+                            generation=candidate.manifest.generation,
+                            trust_state=candidate.trust.state.value,
+                            lifecycle_state=candidate.lifecycle.state.value,
+                            policy_sha256=(candidate.verification_metadata.policy_sha256),
+                            reason_code="existing_identical_cache",
+                        ),
+                    )
+                except SecurityAuditStorageError:
+                    pass
+
             return resolved_final
 
         raise IntelligenceUpdatePromotionError(
@@ -1052,6 +1130,30 @@ def promote_verified_candidate(
                 temporary,
                 ignore_errors=True,
             )
+
+    if security_audit_path is not None:
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=datetime.now(UTC),
+                    event_type=SecurityAuditEventType.UPDATE_PROMOTED,
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.update",
+                    operation="promote_verified_candidate",
+                    policy_id=candidate.policy.policy_id,
+                    signer_id=candidate.manifest.signer_id,
+                    source_id=candidate.verification_metadata.source_id,
+                    channel=candidate.verification_metadata.channel,
+                    generation=candidate.manifest.generation,
+                    trust_state=candidate.trust.state.value,
+                    lifecycle_state=candidate.lifecycle.state.value,
+                    policy_sha256=(candidate.verification_metadata.policy_sha256),
+                    reason_code="new_cache_entry",
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
 
     return final_directory
 
@@ -1501,6 +1603,7 @@ def activate_cached_intelligence(
     cache_directory: Path | str,
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
     maximum_future_skew_seconds: int = 300,
@@ -1524,6 +1627,7 @@ def activate_cached_intelligence(
         manifest=manifest,
         trust_store_path=trust_store_path,
         lifecycle_state_path=lifecycle_state_path,
+        security_audit_path=security_audit_path,
         minimum_generation=minimum_generation,
         maximum_age_days=maximum_age_days,
         maximum_future_skew_seconds=maximum_future_skew_seconds,
@@ -1536,6 +1640,7 @@ def select_and_activate_cached_intelligence(
     verified_root: Path | str,
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     policy_id: str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
@@ -1554,6 +1659,7 @@ def select_and_activate_cached_intelligence(
         cache_directory=(entry.path),
         trust_store_path=(trust_store_path),
         lifecycle_state_path=(lifecycle_state_path),
+        security_audit_path=security_audit_path,
         minimum_generation=(minimum_generation),
         maximum_age_days=(maximum_age_days),
         maximum_future_skew_seconds=(maximum_future_skew_seconds),

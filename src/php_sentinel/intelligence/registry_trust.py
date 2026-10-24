@@ -37,6 +37,10 @@ from php_sentinel.intelligence.lifecycle import (
 from php_sentinel.intelligence.repository import (
     read_bounded_regular_file,
 )
+from php_sentinel.intelligence.security_audit import (
+    SecurityAuditStorageError,
+    append_security_audit_event,
+)
 from php_sentinel.intelligence.source_registry import (
     IntelligenceSourceRegistryError,
     activate_registry_cached_intelligence_from_registry,
@@ -71,6 +75,11 @@ from php_sentinel.models.registry_trust import (
     SourceRegistryStateStore,
     SourceRegistryTrustDecision,
     SourceRegistryTrustState,
+)
+from php_sentinel.models.security_audit import (
+    SecurityAuditEvent,
+    SecurityAuditEventType,
+    SecurityAuditOutcome,
 )
 from php_sentinel.models.state_auth import AuthorityStateEnvelope
 
@@ -1143,6 +1152,7 @@ def activate_signed_source_registry(
     manifest_path: Path | str,
     registry_trust_store_path: Path | str,
     registry_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
     maximum_future_skew_seconds: int = 300,
@@ -1231,6 +1241,26 @@ def activate_signed_source_registry(
         require_authenticated=True,
     )
 
+    if security_audit_path is not None:
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=(now or datetime.now(UTC)),
+                    event_type=(SecurityAuditEventType.REGISTRY_ACTIVATION_ACCEPTED),
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.registry",
+                    operation="activate_signed_source_registry",
+                    registry_id=manifest.registry_id,
+                    signer_id=manifest.signer_id,
+                    generation=manifest.generation,
+                    trust_state=trust.state.value,
+                    lifecycle_state=lifecycle.state.value,
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
+
     return verified
 
 
@@ -1243,6 +1273,7 @@ def stage_bundle_with_signed_registry(
     source_id: str,
     channel: str,
     staging_directory: Path | str,
+    security_audit_path: Path | str | None = None,
     timeout_seconds: float = 15.0,
     maximum_bytes: int = 2 * 1024 * 1024,
     client=None,
@@ -1276,6 +1307,7 @@ def stage_bundle_with_signed_registry(
         source_id=source_id,
         channel=channel,
         staging_directory=staging_directory,
+        security_audit_path=security_audit_path,
         timeout_seconds=timeout_seconds,
         maximum_bytes=maximum_bytes,
         client=client,
@@ -1301,6 +1333,7 @@ def verify_staged_bundle_with_signed_registry(
     staging_directory: Path | str,
     intelligence_trust_store_path: Path | str,
     intelligence_lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     registry_minimum_generation: int = 1,
     registry_maximum_age_days: int = 30,
     registry_maximum_future_skew_seconds: int = 300,
@@ -1334,6 +1367,7 @@ def verify_staged_bundle_with_signed_registry(
         staging_directory=staging_directory,
         trust_store_path=(intelligence_trust_store_path),
         lifecycle_state_path=(intelligence_lifecycle_state_path),
+        security_audit_path=security_audit_path,
         minimum_generation=(intelligence_minimum_generation),
         maximum_age_days=(intelligence_maximum_age_days),
         maximum_future_skew_seconds=(intelligence_maximum_future_skew_seconds),
@@ -1357,6 +1391,7 @@ def activate_cached_intelligence_with_signed_registry(
     verified_root: Path | str,
     intelligence_trust_store_path: Path | str,
     intelligence_lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     policy_id: str | None = None,
     registry_minimum_generation: int = 1,
     registry_maximum_age_days: int = 30,
@@ -1375,6 +1410,7 @@ def activate_cached_intelligence_with_signed_registry(
         manifest_path=registry_manifest_path,
         registry_trust_store_path=(registry_trust_store_path),
         registry_state_path=(registry_state_path),
+        security_audit_path=security_audit_path,
         minimum_generation=(registry_minimum_generation),
         maximum_age_days=(registry_maximum_age_days),
         now=now,
@@ -1387,6 +1423,7 @@ def activate_cached_intelligence_with_signed_registry(
         verified_root=verified_root,
         trust_store_path=(intelligence_trust_store_path),
         lifecycle_state_path=(intelligence_lifecycle_state_path),
+        security_audit_path=security_audit_path,
         policy_id=policy_id,
         minimum_generation=(intelligence_minimum_generation),
         maximum_age_days=(intelligence_maximum_age_days),

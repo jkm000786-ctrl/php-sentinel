@@ -61,12 +61,17 @@ def stage(
             "--staging-dir",
         ),
     ],
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
 ) -> None:
     try:
         metadata = stage_remote_bundle(
             policy_url=policy_url,
             manifest_url=manifest_url,
             staging_directory=(staging_directory),
+            security_audit_path=audit_log,
         )
 
     except IntelligenceUpdateError as exc:
@@ -109,6 +114,10 @@ def verify(
             "--minimum-generation",
         ),
     ] = 1,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
     maximum_age_days: Annotated[
         int,
         typer.Option(
@@ -121,6 +130,7 @@ def verify(
             staging_directory=(staging_directory),
             trust_store_path=(trust_store),
             lifecycle_state_path=(lifecycle_state),
+            security_audit_path=audit_log,
             minimum_generation=(minimum_generation),
             maximum_age_days=(maximum_age_days),
         )
@@ -174,6 +184,10 @@ def promote(
             "--minimum-generation",
         ),
     ] = 1,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
     maximum_age_days: Annotated[
         int,
         typer.Option(
@@ -186,6 +200,7 @@ def promote(
             staging_directory=(staging_directory),
             trust_store_path=(trust_store),
             lifecycle_state_path=(lifecycle_state),
+            security_audit_path=audit_log,
             minimum_generation=(minimum_generation),
             maximum_age_days=(maximum_age_days),
         )
@@ -193,6 +208,7 @@ def promote(
         destination = promote_verified_candidate(
             candidate=candidate,
             verified_root=(verified_root),
+            security_audit_path=audit_log,
         )
 
     except (
@@ -459,6 +475,10 @@ def source_stage(
         int,
         typer.Option("--registry-minimum-generation"),
     ] = 1,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
     registry_maximum_age_days: Annotated[
         int,
         typer.Option("--registry-max-age-days"),
@@ -480,6 +500,7 @@ def source_stage(
             source_id=source_id,
             channel=channel,
             staging_directory=(staging_directory),
+            security_audit_path=audit_log,
             registry_minimum_generation=(registry_minimum_generation),
             registry_maximum_age_days=(registry_maximum_age_days),
         )
@@ -563,6 +584,10 @@ def source_promote(
         int,
         typer.Option("--registry-minimum-generation"),
     ] = 1,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
     registry_maximum_age_days: Annotated[
         int,
         typer.Option("--registry-max-age-days"),
@@ -586,6 +611,7 @@ def source_promote(
             staging_directory=(staging_directory),
             intelligence_trust_store_path=(trust_store),
             intelligence_lifecycle_state_path=(lifecycle_state),
+            security_audit_path=audit_log,
             registry_minimum_generation=(registry_minimum_generation),
             registry_maximum_age_days=(registry_maximum_age_days),
             intelligence_minimum_generation=(minimum_generation),
@@ -597,6 +623,7 @@ def source_promote(
             verified_root=verified_root,
             expected_source_id=source_id,
             expected_channel=channel,
+            security_audit_path=audit_log,
         )
 
     except (
@@ -672,6 +699,10 @@ def source_activate(
         int,
         typer.Option("--registry-minimum-generation"),
     ] = 1,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
     registry_maximum_age_days: Annotated[
         int,
         typer.Option("--registry-max-age-days"),
@@ -700,6 +731,7 @@ def source_activate(
             verified_root=verified_root,
             intelligence_trust_store_path=(trust_store),
             intelligence_lifecycle_state_path=(lifecycle_state),
+            security_audit_path=audit_log,
             policy_id=policy_id,
             registry_minimum_generation=(registry_minimum_generation),
             registry_maximum_age_days=(registry_maximum_age_days),
@@ -815,6 +847,10 @@ def registry_activate(
         int,
         typer.Option("--minimum-generation"),
     ] = 1,
+    audit_log: Annotated[
+        Path | None,
+        typer.Option("--audit-log"),
+    ] = None,
     maximum_age_days: Annotated[
         int,
         typer.Option("--max-age-days"),
@@ -826,6 +862,7 @@ def registry_activate(
             manifest_path=manifest,
             registry_trust_store_path=trust_store,
             registry_state_path=state,
+            security_audit_path=audit_log,
             minimum_generation=minimum_generation,
             maximum_age_days=maximum_age_days,
         )

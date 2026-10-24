@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from php_sentinel.intelligence.delegation import (
@@ -16,6 +16,10 @@ from php_sentinel.intelligence.lifecycle import (
 from php_sentinel.intelligence.repository import (
     default_policy,
     load_policy,
+)
+from php_sentinel.intelligence.security_audit import (
+    SecurityAuditStorageError,
+    append_security_audit_event,
 )
 from php_sentinel.intelligence.state_key import (
     authority_state_key_path_for_state,
@@ -36,6 +40,11 @@ from php_sentinel.models.intelligence_policy import (
 )
 from php_sentinel.models.intelligence_trust import (
     IntelligenceTrustDecision,
+)
+from php_sentinel.models.security_audit import (
+    SecurityAuditEvent,
+    SecurityAuditEventType,
+    SecurityAuditOutcome,
 )
 
 
@@ -345,6 +354,7 @@ def activate_verified_intelligence_objects(
     manifest,
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str | None = None,
+    security_audit_path: Path | str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
     maximum_future_skew_seconds: int = 300,
@@ -365,11 +375,33 @@ def activate_verified_intelligence_objects(
         now=now,
     )
 
-    return _verified_selection(
+    selection = _verified_selection(
         policy=verified_policy,
         trust=trust,
         lifecycle=lifecycle,
     )
+
+    if security_audit_path is not None:
+        try:
+            append_security_audit_event(
+                security_audit_path,
+                SecurityAuditEvent(
+                    occurred_at=(now or datetime.now(UTC)),
+                    event_type=(SecurityAuditEventType.INTELLIGENCE_ACTIVATION_ACCEPTED),
+                    outcome=SecurityAuditOutcome.SUCCEEDED,
+                    component="intelligence.activation",
+                    operation="activate_verified_intelligence_objects",
+                    policy_id=verified_policy.policy_id,
+                    signer_id=manifest.signer_id,
+                    generation=manifest.generation,
+                    trust_state=trust.state.value,
+                    lifecycle_state=lifecycle.state.value,
+                ),
+            )
+        except SecurityAuditStorageError:
+            pass
+
+    return selection
 
 
 def bundled_verified_intelligence() -> VerifiedIntelligenceSelection:

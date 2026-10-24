@@ -262,6 +262,7 @@ def stage_registry_bundle_from_registry(
     source_id: str,
     channel: str,
     staging_directory: Path | str,
+    security_audit_path: Path | str | None = None,
     timeout_seconds: float = 15.0,
     maximum_bytes: int = 2 * 1024 * 1024,
     client: httpx.Client | None = None,
@@ -287,6 +288,7 @@ def stage_registry_bundle_from_registry(
         policy_url=selection.policy_url,
         manifest_url=(selection.manifest_url),
         staging_directory=(staging_directory),
+        security_audit_path=security_audit_path,
         timeout_seconds=(timeout_seconds),
         maximum_bytes=(maximum_bytes),
         client=client,
@@ -375,6 +377,7 @@ def verify_registry_staged_bundle_from_registry(
     staging_directory: Path | str,
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
     maximum_future_skew_seconds: int = 300,
@@ -410,6 +413,7 @@ def verify_registry_staged_bundle_from_registry(
         staging_directory=(staging_directory),
         trust_store_path=(trust_store_path),
         lifecycle_state_path=(lifecycle_state_path),
+        security_audit_path=security_audit_path,
         minimum_generation=(effective_minimum),
         maximum_age_days=(maximum_age_days),
         maximum_future_skew_seconds=(maximum_future_skew_seconds),
@@ -466,6 +470,7 @@ def promote_registry_candidate(
     verified_root: Path | str,
     expected_source_id: str,
     expected_channel: str,
+    security_audit_path: Path | str | None = None,
 ) -> Path:
     if (
         candidate.verification_metadata.source_id != expected_source_id
@@ -478,6 +483,7 @@ def promote_registry_candidate(
     return promote_verified_candidate(
         candidate=candidate,
         verified_root=verified_root,
+        security_audit_path=security_audit_path,
     )
 
 
@@ -547,6 +553,7 @@ def activate_registry_cached_intelligence_from_registry(
     verified_root: Path | str,
     trust_store_path: Path | str,
     lifecycle_state_path: Path | str,
+    security_audit_path: Path | str | None = None,
     policy_id: str | None = None,
     minimum_generation: int = 1,
     maximum_age_days: int = 30,
@@ -591,6 +598,7 @@ def activate_registry_cached_intelligence_from_registry(
         cache_directory=entry.path,
         trust_store_path=(trust_store_path),
         lifecycle_state_path=(lifecycle_state_path),
+        security_audit_path=security_audit_path,
         minimum_generation=(effective_minimum),
         maximum_age_days=(maximum_age_days),
         maximum_future_skew_seconds=(maximum_future_skew_seconds),
