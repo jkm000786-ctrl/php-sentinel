@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 SUPPORTED_SOURCE_REGISTRY_VERSIONS = frozenset({1})
 
+MAX_SOURCE_REGISTRY_SOURCES = 256
+MAX_SOURCE_CHANNELS_PER_SOURCE = 128
+MAX_SOURCE_ALLOWED_SIGNERS = 128
+
 
 class IntelligenceSourceChannel(BaseModel):
     channel: str = Field(
@@ -73,10 +77,12 @@ class IntelligenceSource(BaseModel):
 
     allowed_signer_ids: list[str] = Field(
         min_length=1,
+        max_length=MAX_SOURCE_ALLOWED_SIGNERS,
     )
 
     channels: list[IntelligenceSourceChannel] = Field(
         min_length=1,
+        max_length=MAX_SOURCE_CHANNELS_PER_SOURCE,
     )
 
     @field_validator("allowed_signer_ids")
@@ -135,6 +141,7 @@ class IntelligenceSourceRegistry(BaseModel):
 
     sources: list[IntelligenceSource] = Field(
         default_factory=list,
+        max_length=MAX_SOURCE_REGISTRY_SOURCES,
     )
 
     @model_validator(mode="after")

@@ -23,9 +23,11 @@ from php_sentinel.intelligence.trust import (
     create_signed_manifest,
 )
 from php_sentinel.intelligence.update import (
+    STAGE_METADATA_FILENAME,
     IntelligenceUpdatePromotionError,
     IntelligenceUpdateTransportError,
     IntelligenceUpdateVerificationError,
+    load_stage_metadata,
     promote_verified_candidate,
     stage_remote_bundle,
     verify_staged_bundle,
@@ -581,3 +583,87 @@ def test_staged_manifest_byte_count_metadata_tampering_is_detected(
             lifecycle_state_path=state_path,
             now=NOW,
         )
+
+
+def test_oversized_stage_metadata_fails_closed(
+    tmp_path,
+):
+    from php_sentinel.intelligence.update import (
+        STAGE_METADATA_FILENAME,
+        STAGE_METADATA_MAX_BYTES,
+        IntelligenceUpdateVerificationError,
+        load_stage_metadata,
+    )
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+
+    (stage / STAGE_METADATA_FILENAME).write_bytes(b"{" + (b"x" * STAGE_METADATA_MAX_BYTES))
+
+    with pytest.raises(
+        IntelligenceUpdateVerificationError,
+        match="maximum allowed size",
+    ):
+        load_stage_metadata(stage)
+
+
+def test_oversized_staged_policy_fails_closed_before_full_read(
+    tmp_path,
+):
+    from php_sentinel.intelligence.update import (
+        STAGED_ARTIFACT_MAX_BYTES,
+        STAGED_MANIFEST_FILENAME,
+        STAGED_POLICY_FILENAME,
+        IntelligenceUpdateStageMetadata,
+        IntelligenceUpdateVerificationError,
+        _validate_staged_transport_integrity,
+    )
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+
+    policy = stage / STAGED_POLICY_FILENAME
+    manifest = stage / STAGED_MANIFEST_FILENAME
+
+    policy.write_bytes(b"x" * (STAGED_ARTIFACT_MAX_BYTES + 1))
+    manifest.write_bytes(b"{}")
+
+    metadata = IntelligenceUpdateStageMetadata(
+        policy_url="https://example.com/policy.json",
+        manifest_url="https://example.com/manifest.json",
+        fetched_at=NOW,
+        policy_transport_sha256="0" * 64,
+        manifest_transport_sha256="0" * 64,
+        policy_bytes=STAGED_ARTIFACT_MAX_BYTES + 1,
+        manifest_bytes=2,
+    )
+
+    with pytest.raises(
+        IntelligenceUpdateVerificationError,
+        match="Staged intelligence artifact exceeds the maximum allowed size",
+    ):
+        _validate_staged_transport_integrity(
+            stage,
+            metadata,
+        )
+
+
+def test_stage_metadata_symlink_is_rejected(
+    tmp_path,
+):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+
+    target = tmp_path / "metadata-target.json"
+    target.write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    (stage / STAGE_METADATA_FILENAME).symlink_to(target)
+
+    with pytest.raises(
+        IntelligenceUpdateVerificationError,
+        match="symbolic link|opened safely",
+    ):
+        load_stage_metadata(stage)

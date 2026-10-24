@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import errno
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Annotated
 
@@ -17,11 +20,72 @@ from php_sentinel.models.unified import (
 
 console = Console()
 
+COMPARE_REPORT_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _read_report_bytes(
+    path: Path,
+    *,
+    maximum_bytes: int = COMPARE_REPORT_MAX_BYTES,
+) -> bytes:
+    if maximum_bytes < 1:
+        raise ValueError("maximum_bytes must be positive.")
+
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            path,
+            flags,
+        )
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError(f"Comparison report must not be a symbolic link: {path}.") from exc
+        raise
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise ValueError(f"Comparison report is not a regular file: {path}.")
+
+        chunks: list[bytes] = []
+        total = 0
+
+        while True:
+            remaining = maximum_bytes - total
+
+            chunk = os.read(
+                descriptor,
+                min(1024 * 1024, remaining + 1),
+            )
+
+            if not chunk:
+                break
+
+            total += len(chunk)
+
+            if total > maximum_bytes:
+                raise ValueError(f"Comparison report exceeds the maximum allowed size: {path}.")
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
+
 
 def load_report(
     path: Path,
 ) -> UnifiedAssessmentReport:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(_read_report_bytes(path).decode("utf-8"))
 
     return UnifiedAssessmentReport.model_validate(data)
 

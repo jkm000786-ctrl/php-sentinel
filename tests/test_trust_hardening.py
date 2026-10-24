@@ -413,3 +413,62 @@ def test_trust_store_read_rejects_non_regular_file(
         match="not a regular file",
     ):
         load_trust_store(trust_path)
+
+
+def test_oversized_trust_store_fails_closed(
+    tmp_path,
+):
+    from php_sentinel.intelligence.trust import (
+        TRUST_STORE_MAX_BYTES,
+        load_trust_store,
+    )
+
+    path = tmp_path / "trust.json"
+    path.write_bytes(b"{" + (b"x" * TRUST_STORE_MAX_BYTES))
+
+    with pytest.raises(
+        ValueError,
+        match="maximum allowed size",
+    ):
+        load_trust_store(path)
+
+
+def test_trust_store_rejects_excessive_signer_count():
+    from pydantic import ValidationError
+
+    from php_sentinel.models.intelligence_trust import (
+        MAX_TRUST_STORE_SIGNERS,
+        TrustedSigner,
+        TrustStore,
+    )
+
+    signer = TrustedSigner(
+        signer_id="base",
+        public_key_b64=base64.b64encode(b"k" * 32).decode("ascii"),
+    )
+
+    with pytest.raises(ValidationError):
+        TrustStore(
+            signers=[
+                signer.model_copy(update={"signer_id": f"signer-{index}"})
+                for index in range(MAX_TRUST_STORE_SIGNERS + 1)
+            ]
+        )
+
+
+def test_manifest_loader_rejects_oversized_file(
+    tmp_path,
+):
+    from php_sentinel.intelligence.repository import (
+        LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES,
+    )
+    from php_sentinel.intelligence.trust import load_manifest
+
+    path = tmp_path / "manifest.json"
+    path.write_bytes(b"x" * (LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES + 1))
+
+    with pytest.raises(
+        ValueError,
+        match="maximum allowed size",
+    ):
+        load_manifest(path)

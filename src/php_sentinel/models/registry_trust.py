@@ -17,6 +17,10 @@ from php_sentinel.models.intelligence_trust import (
 SUPPORTED_REGISTRY_MANIFEST_VERSIONS = frozenset({1})
 SUPPORTED_REGISTRY_STATE_VERSIONS = frozenset({1})
 
+MAX_REGISTRY_STATE_RECORDS = 1024
+MAX_REGISTRY_DELEGATION_RECORDS = 4096
+MAX_REGISTRY_REVOCATION_RECORDS = 8192
+
 ED25519_SIGNATURE_BYTES = 64
 
 
@@ -210,6 +214,7 @@ class SourceRegistryStateStore(BaseModel):
         SourceRegistryStateRecord,
     ] = Field(
         default_factory=dict,
+        max_length=MAX_REGISTRY_STATE_RECORDS,
     )
 
     delegation_records: dict[
@@ -217,6 +222,7 @@ class SourceRegistryStateStore(BaseModel):
         DelegationHistoryRecord,
     ] = Field(
         default_factory=dict,
+        max_length=MAX_REGISTRY_DELEGATION_RECORDS,
     )
 
     revocation_records: dict[
@@ -224,6 +230,7 @@ class SourceRegistryStateStore(BaseModel):
         DelegationRevocationHistoryRecord,
     ] = Field(
         default_factory=dict,
+        max_length=MAX_REGISTRY_REVOCATION_RECORDS,
     )
 
     @model_validator(mode="after")

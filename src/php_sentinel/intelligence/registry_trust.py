@@ -34,6 +34,9 @@ from php_sentinel.intelligence.lifecycle import (
     _unlink_relative_if_identity_matches,
     lifecycle_state_lock,
 )
+from php_sentinel.intelligence.repository import (
+    read_bounded_regular_file,
+)
 from php_sentinel.intelligence.source_registry import (
     IntelligenceSourceRegistryError,
     activate_registry_cached_intelligence_from_registry,
@@ -229,7 +232,7 @@ def load_source_registry_manifest(
     path: Path | str,
 ) -> SourceRegistryManifest:
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(read_bounded_regular_file(path).decode("utf-8"))
 
         return SourceRegistryManifest.model_validate(data)
 
@@ -695,6 +698,15 @@ def _save_source_registry_state_unlocked(
     authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
     state_path = Path(path)
+
+    try:
+        state = SourceRegistryStateStore.model_validate(
+            state.model_dump(mode="python"),
+        )
+    except ValueError as exc:
+        raise SourceRegistryStateStorageError(
+            "Source-registry persistence rejected invalid or excessive state."
+        ) from exc
 
     anchor = _anchor
     owns_anchor = False

@@ -199,14 +199,15 @@ def open_directory_anchor(
             os.close(descriptor)
             descriptor = child_fd
 
-        try:
-            os.fchmod(
-                descriptor,
-                mode,
-            )
-        except OSError:
-            # Some filesystems/platforms cannot enforce POSIX mode bits.
-            pass
+        if parts:
+            try:
+                os.fchmod(
+                    descriptor,
+                    mode,
+                )
+            except OSError:
+                # Some filesystems/platforms cannot enforce POSIX mode bits.
+                pass
 
         return DirectoryAnchor(
             descriptor=descriptor,

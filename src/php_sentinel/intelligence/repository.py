@@ -17,11 +17,80 @@ DEFAULT_POLICY_RESOURCE = "data/intelligence/php-2026-10-critical.json"
 
 SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
 
+LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
+
 
 def _read_default_policy() -> str:
     resource = resources.files("php_sentinel").joinpath(DEFAULT_POLICY_RESOURCE)
 
     return resource.read_text(encoding="utf-8")
+
+
+def read_bounded_regular_file(
+    path: Path | str,
+    *,
+    maximum_bytes: int = LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES,
+) -> bytes:
+    import errno
+    import os
+    import stat
+
+    if maximum_bytes < 1:
+        raise ValueError("maximum_bytes must be positive.")
+
+    selected = Path(path)
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            selected,
+            flags,
+        )
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError(
+                f"Intelligence artifact must not be a symbolic link: {selected}."
+            ) from exc
+        raise
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise ValueError(f"Intelligence artifact is not a regular file: {selected}.")
+
+        chunks: list[bytes] = []
+        total = 0
+
+        while True:
+            remaining = maximum_bytes - total
+            chunk = os.read(
+                descriptor,
+                min(1024 * 1024, remaining + 1),
+            )
+
+            if not chunk:
+                break
+
+            total += len(chunk)
+
+            if total > maximum_bytes:
+                raise ValueError(
+                    f"Intelligence artifact exceeds the maximum allowed size: {selected}."
+                )
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
 
 
 def canonical_policy_bytes(
@@ -85,7 +154,7 @@ def load_policy(
     if path is None:
         raw = _read_default_policy().encode("utf-8")
     else:
-        raw = Path(path).read_bytes()
+        raw = read_bounded_regular_file(path)
 
     return parse_policy_bytes(raw)
 

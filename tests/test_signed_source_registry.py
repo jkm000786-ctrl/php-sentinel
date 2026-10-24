@@ -749,3 +749,93 @@ def test_registry_activation_rejects_unsigned_legacy_state(
             registry_state_path=state_path,
             now=NOW,
         )
+
+
+def test_registry_state_model_rejects_excessive_record_count():
+    from datetime import UTC, datetime
+
+    from pydantic import ValidationError
+
+    from php_sentinel.models.registry_trust import (
+        MAX_REGISTRY_STATE_RECORDS,
+        SourceRegistryStateRecord,
+        SourceRegistryStateStore,
+    )
+
+    record = SourceRegistryStateRecord(
+        generation=1,
+        registry_sha256="0" * 64,
+        signer_id="signer",
+        accepted_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValidationError):
+        SourceRegistryStateStore(
+            records={f"registry-{index}": record for index in range(MAX_REGISTRY_STATE_RECORDS + 1)}
+        )
+
+
+def test_registry_manifest_loader_rejects_oversized_file(
+    tmp_path,
+):
+    from php_sentinel.intelligence.registry_trust import (
+        load_source_registry_manifest,
+    )
+    from php_sentinel.intelligence.repository import (
+        LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES,
+    )
+
+    path = tmp_path / "registry-manifest.json"
+    path.write_bytes(b"x" * (LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES + 1))
+
+    with pytest.raises(
+        SourceRegistryVerificationError,
+        match="unreadable or invalid",
+    ):
+        load_source_registry_manifest(path)
+
+
+def test_registry_writer_revalidates_mutated_excessive_state(
+    tmp_path,
+):
+    from datetime import UTC, datetime
+
+    from php_sentinel.intelligence.registry_trust import (
+        SourceRegistryStateStorageError,
+        save_source_registry_state,
+    )
+    from php_sentinel.models.registry_trust import (
+        MAX_REGISTRY_STATE_RECORDS,
+        SourceRegistryStateRecord,
+        SourceRegistryStateStore,
+    )
+
+    state = SourceRegistryStateStore()
+
+    record = SourceRegistryStateRecord(
+        generation=1,
+        registry_sha256="b" * 64,
+        signer_id="writer-boundary-signer",
+        accepted_at=datetime(
+            2026,
+            10,
+            24,
+            tzinfo=UTC,
+        ),
+    )
+
+    for index in range(MAX_REGISTRY_STATE_RECORDS + 1):
+        state.records[f"registry-{index}"] = record
+
+    path = tmp_path / "state" / "registry.json"
+
+    with pytest.raises(
+        SourceRegistryStateStorageError,
+        match="invalid or excessive state",
+    ):
+        save_source_registry_state(
+            path,
+            state,
+        )
+
+    assert not path.exists()

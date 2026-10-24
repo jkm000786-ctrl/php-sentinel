@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import os
+from pathlib import Path
 
 import pytest
 
@@ -152,3 +153,126 @@ def test_other_open_oserror_is_normalized(
             create=False,
             mode=0o700,
         )
+
+
+def test_current_directory_anchor_does_not_chmod_start_descriptor(
+    monkeypatch,
+):
+    import php_sentinel.intelligence.path_anchor as path_anchor_module
+
+    calls: list[tuple[int, int]] = []
+
+    def record_fchmod(
+        descriptor,
+        mode,
+    ):
+        calls.append(
+            (
+                descriptor,
+                mode,
+            )
+        )
+
+    monkeypatch.setattr(
+        path_anchor_module.os,
+        "fchmod",
+        record_fchmod,
+    )
+
+    anchor = open_directory_anchor(
+        Path("."),
+        create=False,
+        mode=0o700,
+    )
+
+    assert anchor is not None
+
+    try:
+        assert calls == []
+    finally:
+        close_directory_anchor(anchor)
+
+
+def test_root_directory_anchor_does_not_chmod_start_descriptor(
+    monkeypatch,
+):
+    import php_sentinel.intelligence.path_anchor as path_anchor_module
+
+    calls: list[tuple[int, int]] = []
+
+    def record_fchmod(
+        descriptor,
+        mode,
+    ):
+        calls.append(
+            (
+                descriptor,
+                mode,
+            )
+        )
+
+    monkeypatch.setattr(
+        path_anchor_module.os,
+        "fchmod",
+        record_fchmod,
+    )
+
+    anchor = open_directory_anchor(
+        Path("/"),
+        create=False,
+        mode=0o700,
+    )
+
+    assert anchor is not None
+
+    try:
+        assert calls == []
+    finally:
+        close_directory_anchor(anchor)
+
+
+def test_nonempty_directory_anchor_still_applies_requested_mode(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.path_anchor as path_anchor_module
+
+    calls: list[tuple[int, int]] = []
+    real_fchmod = path_anchor_module.os.fchmod
+
+    def record_fchmod(
+        descriptor,
+        mode,
+    ):
+        calls.append(
+            (
+                descriptor,
+                mode,
+            )
+        )
+        return real_fchmod(
+            descriptor,
+            mode,
+        )
+
+    monkeypatch.setattr(
+        path_anchor_module.os,
+        "fchmod",
+        record_fchmod,
+    )
+
+    target = tmp_path / "managed"
+
+    anchor = open_directory_anchor(
+        target,
+        create=True,
+        mode=0o700,
+    )
+
+    assert anchor is not None
+
+    try:
+        assert calls
+        assert calls[-1][1] == 0o700
+    finally:
+        close_directory_anchor(anchor)

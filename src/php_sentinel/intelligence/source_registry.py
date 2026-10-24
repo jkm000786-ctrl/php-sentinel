@@ -11,6 +11,9 @@ import httpx
 from php_sentinel.intelligence.activation import (
     VerifiedIntelligenceSelection,
 )
+from php_sentinel.intelligence.repository import (
+    read_bounded_regular_file,
+)
 from php_sentinel.intelligence.update import (
     IntelligenceUpdateError,
     VerifiedUpdateCandidate,
@@ -42,7 +45,7 @@ def load_source_registry(
     path: Path | str,
 ) -> IntelligenceSourceRegistry:
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(read_bounded_regular_file(path).decode("utf-8"))
 
         return IntelligenceSourceRegistry.model_validate(data)
 

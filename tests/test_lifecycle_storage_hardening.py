@@ -626,3 +626,92 @@ def test_nested_state_directories_are_created_component_by_component(
 
     assert state_path.exists()
     assert load_lifecycle_state(state_path) == LifecycleStateStore()
+
+
+def test_oversized_lifecycle_state_fails_closed_before_json_parse(
+    tmp_path,
+):
+    from php_sentinel.intelligence.lifecycle import (
+        LIFECYCLE_STATE_MAX_BYTES,
+        LifecycleStateStorageError,
+        load_lifecycle_state,
+    )
+
+    path = tmp_path / "lifecycle.json"
+    path.write_bytes(b"{" + (b"x" * LIFECYCLE_STATE_MAX_BYTES))
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="maximum allowed size",
+    ):
+        load_lifecycle_state(path)
+
+
+def test_lifecycle_state_model_rejects_excessive_record_count():
+    from datetime import UTC, datetime
+
+    from pydantic import ValidationError
+
+    from php_sentinel.models.intelligence_lifecycle import (
+        MAX_LIFECYCLE_STATE_RECORDS,
+        LifecycleStateRecord,
+        LifecycleStateStore,
+    )
+
+    record = LifecycleStateRecord(
+        generation=1,
+        policy_sha256="0" * 64,
+        signer_id="signer",
+        accepted_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValidationError):
+        LifecycleStateStore(
+            records={f"policy-{index}": record for index in range(MAX_LIFECYCLE_STATE_RECORDS + 1)}
+        )
+
+
+def test_lifecycle_writer_revalidates_mutated_excessive_state(
+    tmp_path,
+):
+    from datetime import UTC, datetime
+
+    from php_sentinel.intelligence.lifecycle import (
+        LifecycleStateStorageError,
+        save_lifecycle_state,
+    )
+    from php_sentinel.models.intelligence_lifecycle import (
+        MAX_LIFECYCLE_STATE_RECORDS,
+        LifecycleStateRecord,
+        LifecycleStateStore,
+    )
+
+    state = LifecycleStateStore()
+
+    record = LifecycleStateRecord(
+        generation=1,
+        policy_sha256="a" * 64,
+        signer_id="writer-boundary-signer",
+        accepted_at=datetime(
+            2026,
+            10,
+            24,
+            tzinfo=UTC,
+        ),
+    )
+
+    for index in range(MAX_LIFECYCLE_STATE_RECORDS + 1):
+        state.records[f"policy-{index}"] = record
+
+    path = tmp_path / "state" / "lifecycle.json"
+
+    with pytest.raises(
+        LifecycleStateStorageError,
+        match="invalid or excessive state",
+    ):
+        save_lifecycle_state(
+            path,
+            state,
+        )
+
+    assert not path.exists()

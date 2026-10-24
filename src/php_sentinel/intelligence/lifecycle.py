@@ -95,6 +95,7 @@ class LifecycleStateStorageError(ValueError):
 
 LIFECYCLE_STATE_DIRECTORY_MODE = 0o700
 LIFECYCLE_STATE_FILE_MODE = 0o600
+LIFECYCLE_STATE_MAX_BYTES = 4 * 1024 * 1024
 
 LIFECYCLE_LOCK_TIMEOUT_SECONDS = 5.0
 LIFECYCLE_LOCK_POLL_SECONDS = 0.05
@@ -181,18 +182,32 @@ def _directory_fsync_anchor(
 def _read_descriptor_bytes(
     descriptor: int,
     *,
+    maximum_bytes: int = LIFECYCLE_STATE_MAX_BYTES,
     chunk_size: int = 1024 * 1024,
 ) -> bytes:
+    if maximum_bytes < 1:
+        raise ValueError("maximum_bytes must be positive.")
+
     chunks: list[bytes] = []
+    total = 0
 
     while True:
+        remaining = maximum_bytes - total
+
         chunk = os.read(
             descriptor,
-            chunk_size,
+            min(chunk_size, remaining + 1),
         )
 
         if not chunk:
             break
+
+        total += len(chunk)
+
+        if total > maximum_bytes:
+            raise LifecycleStateStorageError(
+                "Lifecycle-state file exceeds the maximum allowed size."
+            )
 
         chunks.append(chunk)
 
@@ -636,6 +651,15 @@ def _save_lifecycle_state_unlocked(
     authority_key: LoadedAuthorityStateKey | None = None,
 ) -> None:
     state_path = Path(path)
+
+    try:
+        state = LifecycleStateStore.model_validate(
+            state.model_dump(mode="python"),
+        )
+    except ValueError as exc:
+        raise LifecycleStateStorageError(
+            "Lifecycle-state persistence rejected invalid or excessive state."
+        ) from exc
 
     anchor = _anchor
     owns_anchor = False

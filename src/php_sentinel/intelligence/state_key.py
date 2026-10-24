@@ -27,6 +27,7 @@ DEFAULT_AUTHORITY_STATE_KEY_PATH = (
 AUTHORITY_KEY_DIRECTORY_MODE = 0o700
 AUTHORITY_KEY_FILE_MODE = 0o600
 AUTHORITY_KEY_BYTES = 32
+AUTHORITY_KEY_FILE_MAX_BYTES = 64 * 1024
 
 
 class AuthorityStateKeyStorageError(ValueError):
@@ -55,18 +56,32 @@ class LoadedAuthorityStateKey:
 def _read_descriptor_bytes(
     descriptor: int,
     *,
+    maximum_bytes: int = AUTHORITY_KEY_FILE_MAX_BYTES,
     chunk_size: int = 64 * 1024,
 ) -> bytes:
+    if maximum_bytes < 1:
+        raise ValueError("maximum_bytes must be positive.")
+
     chunks: list[bytes] = []
+    total = 0
 
     while True:
+        remaining = maximum_bytes - total
+
         chunk = os.read(
             descriptor,
-            chunk_size,
+            min(chunk_size, remaining + 1),
         )
 
         if not chunk:
             break
+
+        total += len(chunk)
+
+        if total > maximum_bytes:
+            raise AuthorityStateKeyStorageError(
+                "Authority-state key file exceeds the maximum allowed size."
+            )
 
         chunks.append(chunk)
 

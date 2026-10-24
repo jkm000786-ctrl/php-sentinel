@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field, model_validator
 
 SUPPORTED_LIFECYCLE_STATE_STORE_VERSIONS = frozenset({1})
 
+MAX_LIFECYCLE_STATE_RECORDS = 4096
+MAX_LIFECYCLE_DELEGATION_RECORDS = 4096
+MAX_LIFECYCLE_REVOCATION_RECORDS = 8192
+
 
 class IntelligenceLifecycleState(
     str,
@@ -127,6 +131,7 @@ class LifecycleStateStore(BaseModel):
         LifecycleStateRecord,
     ] = Field(
         default_factory=dict,
+        max_length=MAX_LIFECYCLE_STATE_RECORDS,
     )
 
     delegation_records: dict[
@@ -134,6 +139,7 @@ class LifecycleStateStore(BaseModel):
         DelegationHistoryRecord,
     ] = Field(
         default_factory=dict,
+        max_length=MAX_LIFECYCLE_DELEGATION_RECORDS,
     )
 
     revocation_records: dict[
@@ -141,6 +147,7 @@ class LifecycleStateStore(BaseModel):
         DelegationRevocationHistoryRecord,
     ] = Field(
         default_factory=dict,
+        max_length=MAX_LIFECYCLE_REVOCATION_RECORDS,
     )
 
     @model_validator(mode="after")

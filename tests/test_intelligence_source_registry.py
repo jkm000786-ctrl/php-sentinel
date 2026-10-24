@@ -702,3 +702,77 @@ def test_registry_cache_activation_rejects_stale_source_urls(
             lifecycle_state_path=state_path,
             now=NOW,
         )
+
+
+def test_source_registry_rejects_excessive_source_count():
+    from pydantic import ValidationError
+
+    from php_sentinel.models.intelligence_source import (
+        MAX_SOURCE_REGISTRY_SOURCES,
+        IntelligenceSourceRegistry,
+    )
+
+    source = registry_model().sources[0]
+
+    with pytest.raises(ValidationError):
+        IntelligenceSourceRegistry(
+            sources=[
+                source.model_copy(update={"source_id": f"source-{index}"})
+                for index in range(MAX_SOURCE_REGISTRY_SOURCES + 1)
+            ]
+        )
+
+
+def test_source_rejects_excessive_channels_and_signers():
+    from pydantic import ValidationError
+
+    from php_sentinel.models.intelligence_source import (
+        MAX_SOURCE_ALLOWED_SIGNERS,
+        MAX_SOURCE_CHANNELS_PER_SOURCE,
+        IntelligenceSource,
+        IntelligenceSourceChannel,
+    )
+
+    channel = IntelligenceSourceChannel(
+        channel="stable",
+        policy_path="policy.json",
+        manifest_path="manifest.json",
+    )
+
+    with pytest.raises(ValidationError):
+        IntelligenceSource(
+            source_id="bounded",
+            base_url="https://example.com/",
+            allowed_signer_ids=["signer"],
+            channels=[
+                channel.model_copy(update={"channel": f"channel-{index}"})
+                for index in range(MAX_SOURCE_CHANNELS_PER_SOURCE + 1)
+            ],
+        )
+
+    with pytest.raises(ValidationError):
+        IntelligenceSource(
+            source_id="bounded",
+            base_url="https://example.com/",
+            allowed_signer_ids=[
+                f"signer-{index}" for index in range(MAX_SOURCE_ALLOWED_SIGNERS + 1)
+            ],
+            channels=[channel],
+        )
+
+
+def test_source_registry_loader_rejects_oversized_file(
+    tmp_path,
+):
+    from php_sentinel.intelligence.repository import (
+        LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES,
+    )
+
+    path = tmp_path / "registry.json"
+    path.write_bytes(b"x" * (LOCAL_INTELLIGENCE_ARTIFACT_MAX_BYTES + 1))
+
+    with pytest.raises(
+        IntelligenceSourceRegistryError,
+        match="unreadable or invalid",
+    ):
+        load_source_registry(path)

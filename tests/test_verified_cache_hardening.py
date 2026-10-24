@@ -886,7 +886,7 @@ def test_promotion_rejects_existing_symlinked_policy_artifact(
 
     with pytest.raises(
         IntelligenceUpdatePromotionError,
-        match="artifacts must not be symbolic links",
+        match="artifacts could not be read safely",
     ):
         create_cached_entry(
             tmp_path,
@@ -952,3 +952,61 @@ def test_cached_activation_uses_exact_securely_loaded_objects(
     )
 
     assert selection.policy.policy_id == default_policy().policy_id
+
+
+def test_oversized_verified_cache_artifact_fails_closed(
+    tmp_path,
+):
+    from php_sentinel.intelligence.update import (
+        VERIFIED_CACHE_ARTIFACT_MAX_BYTES,
+        IntelligenceVerifiedCacheError,
+        inspect_verified_cache_entry,
+    )
+
+    entry = tmp_path / "entry"
+    entry.mkdir()
+
+    (entry / "policy.json").write_bytes(b"{" + (b"x" * VERIFIED_CACHE_ARTIFACT_MAX_BYTES))
+    (entry / "manifest.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    (entry / "verification.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="maximum allowed size",
+    ):
+        inspect_verified_cache_entry(entry)
+
+
+def test_verified_cache_discovery_rejects_excessive_entry_count(
+    tmp_path,
+    monkeypatch,
+):
+    import php_sentinel.intelligence.update as update_module
+    from php_sentinel.intelligence.update import (
+        IntelligenceVerifiedCacheError,
+        discover_verified_cache,
+    )
+
+    monkeypatch.setattr(
+        update_module,
+        "VERIFIED_CACHE_MAX_ENTRIES",
+        3,
+    )
+
+    root = tmp_path / "verified"
+    root.mkdir()
+
+    for index in range(4):
+        (root / f"entry-{index}").mkdir()
+
+    with pytest.raises(
+        IntelligenceVerifiedCacheError,
+        match="too many entries",
+    ):
+        discover_verified_cache(root)

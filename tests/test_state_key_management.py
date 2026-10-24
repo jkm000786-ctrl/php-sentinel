@@ -370,3 +370,22 @@ def test_load_or_create_does_not_replace_non_regular_key(
         load_or_create_authority_state_key(path)
 
     assert path.is_dir()
+
+
+def test_oversized_authority_key_file_fails_closed(
+    tmp_path,
+):
+    from php_sentinel.intelligence.state_key import (
+        AUTHORITY_KEY_FILE_MAX_BYTES,
+        AuthorityStateKeyStorageError,
+        load_authority_state_key,
+    )
+
+    path = tmp_path / "authority-state.key.json"
+    path.write_bytes(b"{" + (b"x" * AUTHORITY_KEY_FILE_MAX_BYTES))
+
+    with pytest.raises(
+        AuthorityStateKeyStorageError,
+        match="maximum allowed size",
+    ):
+        load_authority_state_key(path)

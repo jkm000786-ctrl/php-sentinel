@@ -16,6 +16,11 @@ SUPPORTED_TRUST_STORE_VERSIONS = frozenset({1})
 ED25519_PUBLIC_KEY_BYTES = 32
 ED25519_SIGNATURE_BYTES = 64
 
+MAX_TRUST_STORE_SIGNERS = 512
+MAX_TRUST_STORE_DELEGATIONS = 2048
+MAX_TRUST_STORE_REVOCATIONS = 4096
+MAX_AUTHORIZED_PREDECESSORS_PER_SIGNER = 128
+
 
 class IntelligenceTrustState(str, Enum):
     BUNDLED_TRUSTED = "bundled_trusted"
@@ -319,6 +324,7 @@ class TrustedSigner(BaseModel):
     # Explicit successor relationship for controlled key rotation.
     authorized_predecessors: list[str] = Field(
         default_factory=list,
+        max_length=MAX_AUTHORIZED_PREDECESSORS_PER_SIGNER,
     )
 
     @field_validator("public_key_b64")
@@ -339,14 +345,17 @@ class TrustStore(BaseModel):
 
     signers: list[TrustedSigner] = Field(
         default_factory=list,
+        max_length=MAX_TRUST_STORE_SIGNERS,
     )
 
     delegations: list[SignerDelegation] = Field(
         default_factory=list,
+        max_length=MAX_TRUST_STORE_DELEGATIONS,
     )
 
     delegation_revocations: list[SignerDelegationRevocation] = Field(
         default_factory=list,
+        max_length=MAX_TRUST_STORE_REVOCATIONS,
     )
 
     @model_validator(mode="after")

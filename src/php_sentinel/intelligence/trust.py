@@ -23,10 +23,15 @@ from php_sentinel.intelligence.repository import (
     default_policy,
     load_policy,
     policy_sha256,
+    read_bounded_regular_file,
 )
 from php_sentinel.models.intelligence_policy import (
     IntelligencePolicy,
 )
+
+TRUST_STORE_MAX_BYTES = 4 * 1024 * 1024
+
+
 from php_sentinel.models.intelligence_trust import (
     IntelligenceManifest,
     IntelligenceTrustDecision,
@@ -102,7 +107,7 @@ def parse_manifest_bytes(
 def load_manifest(
     path: Path | str,
 ) -> IntelligenceManifest:
-    return parse_manifest_bytes(Path(path).read_bytes())
+    return parse_manifest_bytes(read_bounded_regular_file(path))
 
 
 def _read_trust_store_bytes(
@@ -138,15 +143,23 @@ def _read_trust_store_bytes(
             raise ValueError(f"Trust-store path is not a regular file: {store_path}.")
 
         chunks: list[bytes] = []
+        total = 0
 
         while True:
+            remaining = TRUST_STORE_MAX_BYTES - total
+
             chunk = os.read(
                 descriptor,
-                1024 * 1024,
+                min(1024 * 1024, remaining + 1),
             )
 
             if not chunk:
                 break
+
+            total += len(chunk)
+
+            if total > TRUST_STORE_MAX_BYTES:
+                raise ValueError("Trust-store file exceeds the maximum allowed size.")
 
             chunks.append(chunk)
 

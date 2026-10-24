@@ -54,6 +54,10 @@ from php_sentinel.models.intelligence_update import (
 
 DEFAULT_UPDATE_MAX_BYTES = 2 * 1024 * 1024
 DEFAULT_UPDATE_TIMEOUT_SECONDS = 15.0
+STAGE_METADATA_MAX_BYTES = 256 * 1024
+STAGED_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
+VERIFIED_CACHE_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
+VERIFIED_CACHE_MAX_ENTRIES = 2048
 
 STAGED_POLICY_FILENAME = "policy.json"
 STAGED_MANIFEST_FILENAME = "manifest.json"
@@ -600,16 +604,88 @@ def stage_remote_bundle(
     return metadata
 
 
+def _read_staged_regular_file_bytes(
+    path: Path,
+    *,
+    maximum_bytes: int,
+) -> bytes:
+    flags = os.O_RDONLY
+
+    for name in (
+        "O_CLOEXEC",
+        "O_NOFOLLOW",
+    ):
+        flags |= getattr(os, name, 0)
+
+    try:
+        descriptor = os.open(
+            path,
+            flags,
+        )
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise IntelligenceUpdateVerificationError(
+                f"Staged intelligence artifact must not be a symbolic link: {path}."
+            ) from exc
+
+        raise IntelligenceUpdateVerificationError(
+            f"Staged intelligence artifact could not be opened safely: {path}."
+        ) from exc
+
+    try:
+        status = os.fstat(descriptor)
+
+        if not stat.S_ISREG(status.st_mode):
+            raise IntelligenceUpdateVerificationError(
+                f"Staged intelligence artifact is not a regular file: {path}."
+            )
+
+        chunks: list[bytes] = []
+        total = 0
+
+        while True:
+            remaining = maximum_bytes - total
+
+            chunk = os.read(
+                descriptor,
+                min(1024 * 1024, remaining + 1),
+            )
+
+            if not chunk:
+                break
+
+            total += len(chunk)
+
+            if total > maximum_bytes:
+                raise IntelligenceUpdateVerificationError(
+                    f"Staged intelligence artifact exceeds the maximum allowed size: {path}."
+                )
+
+            chunks.append(chunk)
+
+        return b"".join(chunks)
+
+    finally:
+        os.close(descriptor)
+
+
 def load_stage_metadata(
     staging_directory: Path | str,
 ) -> IntelligenceUpdateStageMetadata:
     path = Path(staging_directory) / STAGE_METADATA_FILENAME
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = _read_staged_regular_file_bytes(
+            path,
+            maximum_bytes=STAGE_METADATA_MAX_BYTES,
+        )
+
+        data = json.loads(raw.decode("utf-8"))
 
         metadata = IntelligenceUpdateStageMetadata.model_validate(data)
 
+    except IntelligenceUpdateVerificationError:
+        raise
     except (
         OSError,
         ValueError,
@@ -634,15 +710,18 @@ def _validate_staged_transport_integrity(
     bytes,
     bytes,
 ]:
-    try:
-        policy_bytes = staging_directory.joinpath(STAGED_POLICY_FILENAME).read_bytes()
+    policy_path = staging_directory / STAGED_POLICY_FILENAME
+    manifest_path = staging_directory / STAGED_MANIFEST_FILENAME
 
-        manifest_bytes = staging_directory.joinpath(STAGED_MANIFEST_FILENAME).read_bytes()
+    policy_bytes = _read_staged_regular_file_bytes(
+        policy_path,
+        maximum_bytes=STAGED_ARTIFACT_MAX_BYTES,
+    )
 
-    except OSError as exc:
-        raise IntelligenceUpdateVerificationError(
-            "Staged intelligence bundle is incomplete."
-        ) from exc
+    manifest_bytes = _read_staged_regular_file_bytes(
+        manifest_path,
+        maximum_bytes=STAGED_ARTIFACT_MAX_BYTES,
+    )
 
     if len(policy_bytes) != metadata.policy_bytes:
         raise IntelligenceUpdateVerificationError(
@@ -890,21 +969,33 @@ def promote_verified_candidate(
         if not resolved_final.is_dir():
             raise IntelligenceUpdatePromotionError("Verified cache destination is not a directory.")
 
-        existing_policy = resolved_final / VERIFIED_POLICY_FILENAME
-
-        existing_manifest = resolved_final / VERIFIED_MANIFEST_FILENAME
-
-        if existing_policy.is_symlink() or existing_manifest.is_symlink():
-            raise IntelligenceUpdatePromotionError(
-                "Existing verified cache artifacts must not be symbolic links."
+        try:
+            _, existing_directory_fd = _open_verified_cache_directory(
+                resolved_final,
             )
 
-        if (
-            existing_policy.is_file()
-            and existing_manifest.is_file()
-            and existing_policy.read_bytes() == policy_bytes
-            and existing_manifest.read_bytes() == manifest_bytes
-        ):
+            try:
+                existing_policy_bytes = _read_cache_artifact_bytes(
+                    directory=resolved_final,
+                    directory_fd=existing_directory_fd,
+                    filename=VERIFIED_POLICY_FILENAME,
+                )
+
+                existing_manifest_bytes = _read_cache_artifact_bytes(
+                    directory=resolved_final,
+                    directory_fd=existing_directory_fd,
+                    filename=VERIFIED_MANIFEST_FILENAME,
+                )
+
+            finally:
+                os.close(existing_directory_fd)
+
+        except IntelligenceVerifiedCacheError as exc:
+            raise IntelligenceUpdatePromotionError(
+                "Existing verified cache artifacts could not be read safely."
+            ) from exc
+
+        if existing_policy_bytes == policy_bytes and existing_manifest_bytes == manifest_bytes:
             return resolved_final
 
         raise IntelligenceUpdatePromotionError(
@@ -1042,15 +1133,25 @@ def _read_cache_artifact_bytes(
             )
 
         chunks: list[bytes] = []
+        total = 0
 
         while True:
+            remaining = VERIFIED_CACHE_ARTIFACT_MAX_BYTES - total
+
             chunk = os.read(
                 descriptor,
-                1024 * 1024,
+                min(1024 * 1024, remaining + 1),
             )
 
             if not chunk:
                 break
+
+            total += len(chunk)
+
+            if total > VERIFIED_CACHE_ARTIFACT_MAX_BYTES:
+                raise IntelligenceVerifiedCacheError(
+                    "Verified cache artifact exceeds the maximum allowed size."
+                )
 
             chunks.append(chunk)
 
@@ -1269,12 +1370,21 @@ def discover_verified_cache(
 
     entries: list[IntelligenceVerifiedCacheEntry] = []
 
+    visible_directories: list[Path] = []
+
+    for item in root.iterdir():
+        if item.is_symlink() or not item.is_dir() or item.name.startswith("."):
+            continue
+
+        visible_directories.append(item)
+
+        if len(visible_directories) > VERIFIED_CACHE_MAX_ENTRIES:
+            raise IntelligenceVerifiedCacheError(
+                "Verified cache contains too many entries to inspect safely."
+            )
+
     for directory in sorted(
-        (
-            item
-            for item in root.iterdir()
-            if (not item.is_symlink() and item.is_dir() and not item.name.startswith("."))
-        ),
+        visible_directories,
         key=lambda item: item.name,
     ):
         entry = inspect_verified_cache_entry(directory)
