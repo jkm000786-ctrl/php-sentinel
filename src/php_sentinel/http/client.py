@@ -5,6 +5,7 @@ from php_sentinel import __version__
 DEFAULT_HEADERS = {
     "User-Agent": f"PHP-Sentinel/{__version__}",
     "Accept": "*/*",
+    "Accept-Encoding": "identity",
 }
 
 DEFAULT_RESPONSE_MAX_BYTES = 2 * 1024 * 1024

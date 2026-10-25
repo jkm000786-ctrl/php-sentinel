@@ -159,3 +159,7 @@ def test_default_user_agent_uses_package_version():
     from php_sentinel import __version__
 
     assert client_module.DEFAULT_HEADERS["User-Agent"] == f"PHP-Sentinel/{__version__}"
+
+
+def test_default_headers_disable_response_compression():
+    assert client_module.DEFAULT_HEADERS["Accept-Encoding"] == "identity"
