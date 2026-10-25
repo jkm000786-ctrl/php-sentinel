@@ -2,6 +2,14 @@
 
 All notable PHP Sentinel changes will be documented here.
 
+## 0.1.2 - 2026-10-25
+
+### Fixed
+
+- Require explicit server evidence for FrankenPHP SAPI inference so documentation/body mentions cannot produce high-confidence runtime fingerprints.
+- Reject response-body-only PHP-FPM, FastCGI, and CGI SAPI markers to reduce false positives on documentation-heavy sites.
+- Derive Python compatibility-matrix version assertions from the canonical package version instead of a stale hardcoded release value.
+
 ## 0.1.1 - 2026-10-25
 
 ### Fixed
