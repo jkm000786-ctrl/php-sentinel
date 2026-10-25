@@ -1,4 +1,4 @@
-.PHONY: install test lint release-check release-check-dev python-matrix docker-build docker-lab-up docker-down
+.PHONY: install test lint release-check release-check-dev python-matrix reproducible-wheel docker-build docker-lab-up docker-down
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -17,6 +17,9 @@ release-check-dev:
 
 python-matrix:
 	python3 scripts/python_matrix_check.py
+
+reproducible-wheel:
+	python3 scripts/reproducible_wheel_check.py
 
 docker-build:
 	docker compose build scanner
