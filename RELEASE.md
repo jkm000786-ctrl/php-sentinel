@@ -17,7 +17,8 @@ A public release must not be declared ready until:
 - the changelog is updated;
 - security documentation reflects the release;
 - a project license has been intentionally selected and added;
-- release artifacts are built from a reviewed commit.
+- release artifacts are built from a reviewed commit;
+- repository hosting and CI policy are intentionally configured for the release.
 
 ## Versioning
 
@@ -29,5 +30,25 @@ must remain aligned with that value.
 ## Current status
 
 Current development version: `0.1.0`.
+
+The strict local release gate is available through:
+
+    make release-check
+
+The development-tree variant is available through:
+
+    make release-check-dev
+
+The strict gate rejects dirty working trees and verifies lint, the full test
+suite, diff hygiene, canonical version identity, all six CLI entry points,
+wheel metadata, bundled intelligence data, and build-artifact cleanup.
+
+Public release remains blocked by two deliberate policy decisions:
+
+1. no project license has been selected;
+2. no Git remote or CI hosting platform is configured.
+
+No provider-specific CI configuration should be added until the repository host
+is intentionally chosen.
 
 This version is not yet declared a stable public release.
