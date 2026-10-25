@@ -52,3 +52,25 @@ def test_frankenphp_body_mention_alone_is_not_sapi_evidence():
     )
     assert result.sapi == SAPIHypothesis.UNKNOWN
     assert result.confidence == 0.0
+
+
+def test_php_fpm_body_mention_alone_is_not_sapi_evidence():
+    result = infer_sapi(
+        server_family=ServerFamily.UNKNOWN,
+        server_header="BunnyCDN-PK1-1345",
+        x_powered_by=None,
+        body="PHP-FPM and FPM/FastCGI deployment documentation.",
+    )
+    assert result.sapi == SAPIHypothesis.UNKNOWN
+    assert result.confidence == 0.0
+
+
+def test_cgi_fastcgi_body_mention_alone_is_not_sapi_evidence():
+    result = infer_sapi(
+        server_family=ServerFamily.UNKNOWN,
+        server_header="cdn",
+        x_powered_by=None,
+        body="CGI-FCGI CGI/FastCGI SAPI documentation.",
+    )
+    assert result.sapi == SAPIHypothesis.UNKNOWN
+    assert result.confidence == 0.0

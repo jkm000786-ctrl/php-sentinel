@@ -20,7 +20,6 @@ def infer_sapi(
     body: str,
 ) -> SAPIDecision:
     indicators: list[str] = []
-    body_lower = body.lower()
     server_lower = (server_header or "").lower()
 
     if "frankenphp" in server_lower:
@@ -35,34 +34,6 @@ def infer_sapi(
             SAPIHypothesis.LITESPEED,
             0.90,
             ("LiteSpeed server marker observed",),
-        )
-
-    if "fpm/fcgi" in body_lower or "php-fpm" in body_lower:
-        return SAPIDecision(
-            SAPIHypothesis.FPM_FASTCGI,
-            0.95,
-            ("Explicit PHP-FPM/FastCGI marker observed",),
-        )
-
-    if "cgi-fcgi" in body_lower:
-        return SAPIDecision(
-            SAPIHypothesis.FPM_FASTCGI,
-            0.90,
-            ("CGI/FastCGI SAPI marker observed",),
-        )
-
-    if "cgi/fastcgi" in body_lower:
-        return SAPIDecision(
-            SAPIHypothesis.FPM_FASTCGI,
-            0.90,
-            ("FastCGI marker observed",),
-        )
-
-    if "cgi" in body_lower and "sapi" in body_lower:
-        return SAPIDecision(
-            SAPIHypothesis.CGI,
-            0.80,
-            ("CGI SAPI marker observed",),
         )
 
     if server_family == ServerFamily.APACHE and x_powered_by:
