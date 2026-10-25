@@ -24,9 +24,12 @@ Current pinned build tooling:
 
 - `setuptools==84.2.1`
 - `wheel==0.48.0`
+- `packaging==26.3`
 
-These versions match the build backend versions resolved during the Phase 46
-audit.
+These versions match the complete build-tool dependency graph resolved during
+the Phase 46 audit. `packaging==26.3` is a build-environment dependency of
+`wheel==0.48.0`; it does not change PHP Sentinel's separate runtime dependency
+contract (`packaging>=24.2,<26`).
 
 ## Reproducibility integration
 
