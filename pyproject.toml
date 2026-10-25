@@ -36,6 +36,11 @@ dependencies = [
   "cryptography>=44,<50",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jkm000786-ctrl/php-sentinel"
+Repository = "https://github.com/jkm000786-ctrl/php-sentinel"
+Issues = "https://github.com/jkm000786-ctrl/php-sentinel/issues"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3,<9",
