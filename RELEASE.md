@@ -17,7 +17,7 @@ A public release must not be declared ready until:
 - the changelog is updated;
 - security documentation reflects the release;
 - a project license has been intentionally selected and added;
-- release artifacts are built from a reviewed commit;
+- release artifacts are built from a reviewed commit using the pinned build constraints in `requirements/build-constraints.txt`;
 - repository hosting and CI policy are intentionally configured for the release.
 
 ## Versioning

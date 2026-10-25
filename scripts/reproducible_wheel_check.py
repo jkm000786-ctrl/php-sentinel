@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DATE_EPOCH = "1700000000"
+BUILD_CONSTRAINTS = ROOT / "requirements" / "build-constraints.txt"
 
 
 def run(*args: str, env: dict[str, str] | None = None) -> None:
@@ -51,6 +52,7 @@ def main() -> None:
 
             env = dict(__import__("os").environ)
             env["SOURCE_DATE_EPOCH"] = SOURCE_DATE_EPOCH
+            env["PIP_CONSTRAINT"] = str(BUILD_CONSTRAINTS)
 
             for destination in (first, second):
                 run(
