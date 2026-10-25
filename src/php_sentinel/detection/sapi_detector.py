@@ -23,11 +23,11 @@ def infer_sapi(
     body_lower = body.lower()
     server_lower = (server_header or "").lower()
 
-    if "frankenphp" in server_lower or "frankenphp" in body_lower:
+    if "frankenphp" in server_lower:
         return SAPIDecision(
             SAPIHypothesis.FRANKENPHP,
             0.95,
-            ("FrankenPHP marker observed",),
+            ("FrankenPHP server marker observed",),
         )
 
     if server_family == ServerFamily.LITESPEED:

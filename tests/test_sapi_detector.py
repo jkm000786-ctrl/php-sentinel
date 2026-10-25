@@ -30,3 +30,25 @@ def test_apache_php_suggests_mod_php():
         body="",
     )
     assert result.sapi == SAPIHypothesis.MOD_PHP
+
+
+def test_frankenphp_server_header_is_strong_sapi_evidence():
+    result = infer_sapi(
+        server_family=ServerFamily.UNKNOWN,
+        server_header="FrankenPHP",
+        x_powered_by=None,
+        body="",
+    )
+    assert result.sapi == SAPIHypothesis.FRANKENPHP
+    assert result.confidence == 0.95
+
+
+def test_frankenphp_body_mention_alone_is_not_sapi_evidence():
+    result = infer_sapi(
+        server_family=ServerFamily.UNKNOWN,
+        server_header="BunnyCDN-PK1-1345",
+        x_powered_by=None,
+        body="Learn about FrankenPHP and other PHP deployment options.",
+    )
+    assert result.sapi == SAPIHypothesis.UNKNOWN
+    assert result.confidence == 0.0
