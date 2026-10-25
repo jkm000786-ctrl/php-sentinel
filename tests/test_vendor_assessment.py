@@ -42,6 +42,7 @@ def test_old_upstream_banner_with_confirmed_backport_is_vendor_patched():
     )
 
     assert result.status == AssessmentStatus.PATCHED_VENDOR
+    assert result.exposure_priority == "none"
     assert result.applicable_cves == []
 
 

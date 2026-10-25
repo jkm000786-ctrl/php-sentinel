@@ -138,6 +138,7 @@ def assess_response(
 
     if backport.fixed_by_vendor is True:
         result.status = AssessmentStatus.PATCHED_VENDOR
+        result.exposure_priority = "none"
         result.applicable_cves = []
         result.remediation = list(remediation_for(result.status))
         return result
