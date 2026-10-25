@@ -1,0 +1,6 @@
+include README.md
+include SECURITY.md
+include RELEASE.md
+include CHANGELOG.md
+include requirements/build-constraints.txt
+recursive-include src/php_sentinel/data/intelligence *.json
