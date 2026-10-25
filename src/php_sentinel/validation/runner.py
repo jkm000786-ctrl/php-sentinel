@@ -4,6 +4,7 @@ import hashlib
 
 import httpx
 
+from php_sentinel import __version__
 from php_sentinel.models.scope import (
     AuthorizationMode,
     ScopeDecision,
@@ -45,7 +46,7 @@ def run_lab_validation(
         return report
 
     headers = {
-        "User-Agent": "PHP-Sentinel-LabValidator/0.1.0",
+        "User-Agent": f"PHP-Sentinel-LabValidator/{__version__}",
         "Accept": "*/*",
     }
 

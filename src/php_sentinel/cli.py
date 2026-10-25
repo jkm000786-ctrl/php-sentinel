@@ -25,12 +25,28 @@ from php_sentinel.models.vendor import (
 )
 from php_sentinel.reporting.markdown import render_markdown_report
 from php_sentinel.validation.runner import run_lab_validation
+from php_sentinel.versioning import version_callback
 
 app = typer.Typer(
     help="PHP Sentinel — evidence-driven PHP exposure assessment.",
     no_args_is_help=True,
 )
 console = Console()
+
+
+@app.callback()
+def root_options(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show PHP Sentinel version and exit.",
+        ),
+    ] = False,
+) -> None:
+    pass
 
 
 @app.command()

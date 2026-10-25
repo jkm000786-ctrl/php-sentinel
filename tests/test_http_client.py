@@ -153,3 +153,9 @@ def test_fetch_rejects_nonpositive_limit():
             "https://example.test/",
             maximum_bytes=0,
         )
+
+
+def test_default_user_agent_uses_package_version():
+    from php_sentinel import __version__
+
+    assert client_module.DEFAULT_HEADERS["User-Agent"] == f"PHP-Sentinel/{__version__}"

@@ -9,6 +9,7 @@ from rich.table import Table
 
 from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.intelligence.cve_decision_engine import decide_cves
+from php_sentinel.versioning import version_callback
 
 console = Console()
 
@@ -56,6 +57,15 @@ def main(
             help="Write CVE decision evidence as JSON.",
         ),
     ] = None,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show PHP Sentinel version and exit.",
+        ),
+    ] = False,
 ) -> None:
     report = decide_cves(
         php_detected=php_detected,

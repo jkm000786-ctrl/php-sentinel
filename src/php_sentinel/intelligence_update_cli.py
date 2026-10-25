@@ -30,6 +30,7 @@ from php_sentinel.intelligence.update import (
     stage_remote_bundle,
     verify_staged_bundle,
 )
+from php_sentinel.versioning import version_callback
 
 app = typer.Typer(
     help=(
@@ -39,6 +40,21 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+@app.callback()
+def root_options(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show PHP Sentinel version and exit.",
+        ),
+    ] = False,
+) -> None:
+    pass
 
 
 @app.command()

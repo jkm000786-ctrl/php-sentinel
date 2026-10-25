@@ -18,6 +18,7 @@ from php_sentinel.intelligence.trust import (
     load_trust_store,
     verify_manifest,
 )
+from php_sentinel.versioning import version_callback
 
 console = Console()
 
@@ -73,6 +74,15 @@ def main(
             help=("Trusted signer store used with --verify-manifest."),
         ),
     ] = None,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show PHP Sentinel version and exit.",
+        ),
+    ] = False,
 ) -> None:
     policy = _load_or_exit(policy_path)
 

@@ -9,6 +9,7 @@ from rich.table import Table
 
 from php_sentinel.evidence.writer import write_json_evidence
 from php_sentinel.validation.differential import compare_lab_targets
+from php_sentinel.versioning import version_callback
 
 console = Console()
 
@@ -42,6 +43,15 @@ def main(
             help="HTTP timeout in seconds.",
         ),
     ] = 10.0,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show PHP Sentinel version and exit.",
+        ),
+    ] = False,
 ) -> None:
     report = compare_lab_targets(
         candidate,

@@ -1,7 +1,9 @@
 import httpx
 
+from php_sentinel import __version__
+
 DEFAULT_HEADERS = {
-    "User-Agent": "PHP-Sentinel/0.1.0",
+    "User-Agent": f"PHP-Sentinel/{__version__}",
     "Accept": "*/*",
 }
 

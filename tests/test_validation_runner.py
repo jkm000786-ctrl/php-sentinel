@@ -59,3 +59,43 @@ def test_authorized_validation_uses_only_head_and_get(client_cls):
     assert len(result.observations) == 2
     client.head.assert_called_once()
     client.get.assert_called_once()
+
+
+@patch("php_sentinel.validation.runner.httpx.Client")
+def test_lab_validator_user_agent_uses_package_version(client_cls):
+    from php_sentinel import __version__
+
+    request_head = httpx.Request(
+        "HEAD",
+        "http://127.0.0.1:8080/",
+    )
+    request_get = httpx.Request(
+        "GET",
+        "http://127.0.0.1:8080/",
+    )
+
+    head_response = httpx.Response(
+        200,
+        request=request_head,
+    )
+    get_response = httpx.Response(
+        200,
+        content=b"ok",
+        request=request_get,
+    )
+
+    client = Mock()
+    client.__enter__ = Mock(return_value=client)
+    client.__exit__ = Mock(return_value=False)
+    client.head.return_value = head_response
+    client.get.return_value = get_response
+    client_cls.return_value = client
+
+    run_lab_validation(
+        "http://127.0.0.1:8080/",
+        explicit_authorization=True,
+    )
+
+    assert client_cls.call_args.kwargs["headers"]["User-Agent"] == (
+        f"PHP-Sentinel-LabValidator/{__version__}"
+    )

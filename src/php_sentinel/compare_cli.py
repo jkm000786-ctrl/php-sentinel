@@ -21,6 +21,7 @@ from php_sentinel.intelligence.platform_security import (
 from php_sentinel.models.unified import (
     UnifiedAssessmentReport,
 )
+from php_sentinel.versioning import version_callback
 
 console = Console()
 
@@ -126,6 +127,15 @@ def main(
         typer.Option(
             "--allow-cross-target",
             help=("Explicitly permit comparison of reports whose requested targets differ."),
+        ),
+    ] = False,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show PHP Sentinel version and exit.",
         ),
     ] = False,
 ) -> None:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "php-sentinel"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Evidence-driven PHP vulnerability exposure assessment"
 requires-python = ">=3.11"
 dependencies = [
@@ -34,6 +34,8 @@ php-sentinel-update = "php_sentinel.intelligence_update_cli:cli"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.dynamic]
+version = {attr = "php_sentinel.__version__"}
 
 [tool.setuptools.package-data]
 php_sentinel = ["data/intelligence/*.json"]
