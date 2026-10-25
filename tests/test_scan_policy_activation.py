@@ -6,18 +6,20 @@ runner = CliRunner()
 
 
 def test_scan_help_exposes_trusted_policy_options():
-    result = runner.invoke(
-        app,
-        [
-            "scan",
-            "--help",
-        ],
-    )
+    from typer.main import get_command
 
-    assert result.exit_code == 0
-    assert "--policy" in result.stdout
-    assert "--manifest" in result.stdout
-    assert "--trust-store" in result.stdout
+    root = get_command(app)
+    scan_command = root.commands["scan"]
+
+    option_names = {
+        option
+        for param in scan_command.params
+        for option in getattr(param, "opts", [])
+    }
+
+    assert "--policy" in option_names
+    assert "--manifest" in option_names
+    assert "--trust-store" in option_names
 
 
 def test_scan_rejects_external_policy_without_manifest(

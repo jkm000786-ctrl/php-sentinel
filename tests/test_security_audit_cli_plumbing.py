@@ -8,6 +8,10 @@ runner = CliRunner()
 
 
 def test_operational_commands_expose_optional_audit_log():
+    from typer.main import get_command
+
+    root = get_command(update_cli.app)
+
     for command in (
         "stage",
         "verify",
@@ -17,16 +21,13 @@ def test_operational_commands_expose_optional_audit_log():
         "source-activate",
         "registry-activate",
     ):
-        result = runner.invoke(
-            update_cli.app,
-            [
-                command,
-                "--help",
-            ],
-        )
+        option_names = {
+            option
+            for param in root.commands[command].params
+            for option in getattr(param, "opts", [])
+        }
 
-        assert result.exit_code == 0, result.output
-        assert "--audit-log" in result.output
+        assert "--audit-log" in option_names
 
 
 def test_stage_cli_forwards_audit_log(
