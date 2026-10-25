@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import runpy
 import shutil
 import subprocess
 import sys
@@ -8,7 +9,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_SDIST = "php_sentinel-0.1.0.tar.gz"
+VERSION = str(runpy.run_path(ROOT / "src" / "php_sentinel" / "__init__.py")["__version__"])
+EXPECTED_SDIST = f"php_sentinel-{VERSION}.tar.gz"
 REQUIRED_MEMBERS = {
     "README.md",
     "LICENSE",
@@ -78,14 +80,14 @@ def main() -> None:
 
             with tarfile.open(sdist, "r:gz") as archive:
                 names = archive.getnames()
-                prefix = "php_sentinel-0.1.0/"
+                prefix = f"php_sentinel-{VERSION}/"
                 relative = {name.removeprefix(prefix) for name in names if name.startswith(prefix)}
                 missing = sorted(REQUIRED_MEMBERS - relative)
                 if missing:
                     raise SystemExit("Missing required sdist members: " + ", ".join(missing))
                 archive.extractall(extracted, filter="data")
 
-            root = extracted / "php_sentinel-0.1.0"
+            root = extracted / f"php_sentinel-{VERSION}"
             run(
                 sys.executable,
                 "-m",
@@ -99,7 +101,7 @@ def main() -> None:
                 str(rebuilt),
             )
 
-            wheels = sorted(rebuilt.glob("php_sentinel-0.1.0-py3-none-any.whl"))
+            wheels = sorted(rebuilt.glob(f"php_sentinel-{VERSION}-py3-none-any.whl"))
             if len(wheels) != 1:
                 raise SystemExit("Expected exactly one wheel rebuilt from the sdist.")
 
@@ -117,7 +119,7 @@ def main() -> None:
             run(
                 str(install_python),
                 "-c",
-                'from importlib.metadata import version; from importlib.resources import files; import php_sentinel; p=files("php_sentinel").joinpath("data/intelligence/php-2026-10-critical.json"); assert version("php-sentinel")=="0.1.0"; assert php_sentinel.__version__=="0.1.0"; assert len(p.read_bytes())>0',
+                f'from importlib.metadata import version; from importlib.resources import files; import php_sentinel; p=files("php_sentinel").joinpath("data/intelligence/php-2026-10-critical.json"); assert version("php-sentinel")=="{VERSION}"; assert php_sentinel.__version__=="{VERSION}"; assert len(p.read_bytes())>0',
             )
 
             bindir = install_venv / "bin"

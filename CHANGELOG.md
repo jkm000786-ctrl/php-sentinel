@@ -2,6 +2,13 @@
 
 All notable PHP Sentinel changes will be documented here.
 
+## 0.1.1 - 2026-10-25
+
+### Fixed
+
+- Disabled HTTP response compression negotiation for passive scans to avoid real-world decompression failures observed during field validation.
+- Added regression coverage for the `Accept-Encoding: identity` transport invariant.
+
 ## 0.1.0 - 2026-10-25
 
 ### Security
