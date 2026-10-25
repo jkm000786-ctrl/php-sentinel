@@ -114,6 +114,15 @@ def build_and_verify_wheel(version: str) -> None:
                 raise SystemExit("Wheel metadata is missing Markdown long-description type.")
             if "Author: Jahangir Karim" not in metadata:
                 raise SystemExit("Wheel metadata is missing the expected author identity.")
+            if "License-Expression: Apache-2.0" not in metadata:
+                raise SystemExit("Wheel metadata is missing the Apache-2.0 license expression.")
+            if "License-File: LICENSE" not in metadata:
+                raise SystemExit("Wheel metadata is missing the LICENSE file declaration.")
+            license_members = [
+                name for name in names if name.endswith(".dist-info/licenses/LICENSE")
+            ]
+            if len(license_members) != 1:
+                raise SystemExit("Wheel must contain exactly one packaged LICENSE file.")
 
             for command in EXPECTED_COMMANDS:
                 if f"{command} = " not in entry_points:

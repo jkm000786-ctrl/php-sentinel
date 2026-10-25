@@ -16,7 +16,7 @@ A public release must not be declared ready until:
 - CLI version output matches package metadata;
 - the changelog is updated;
 - security documentation reflects the release;
-- a project license has been intentionally selected and added;
+- the project license is present and matches release metadata;
 - release artifacts are built from a reviewed commit using the pinned build constraints in `requirements/build-constraints.txt`;
 - repository hosting and CI policy are intentionally configured for the release.
 
@@ -47,10 +47,12 @@ also validates dependency consistency with `pip check`, installed package
 version identity, packaged intelligence availability, and startup of all six
 installed CLI entry points.
 
-Public release remains blocked by two deliberate policy decisions:
+Apache License 2.0 has now been selected for the project.
 
-1. no project license has been selected;
-2. no Git remote or CI hosting platform is configured.
+Public release remains blocked by repository publication configuration:
+
+1. no Git remote is configured yet;
+2. the final GitHub repository URL has not yet been added to project metadata.
 
 No provider-specific CI configuration should be added until the repository host
 is intentionally chosen.

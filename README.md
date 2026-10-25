@@ -63,8 +63,8 @@ Release governance:
 - [Changelog](CHANGELOG.md)
 - [Release process](RELEASE.md)
 
-A project license has not yet been selected. Do not assume redistribution or
-modification rights until an explicit license is added.
+PHP Sentinel is licensed under the Apache License 2.0. See `LICENSE` for the
+full license terms.
 
 Installed commands expose the package identity directly:
 

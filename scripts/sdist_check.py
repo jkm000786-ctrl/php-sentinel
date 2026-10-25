@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_SDIST = "php_sentinel-0.1.0.tar.gz"
 REQUIRED_MEMBERS = {
     "README.md",
+    "LICENSE",
     "SECURITY.md",
     "RELEASE.md",
     "CHANGELOG.md",
