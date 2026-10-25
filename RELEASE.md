@@ -41,7 +41,11 @@ The development-tree variant is available through:
 
 The strict gate rejects dirty working trees and verifies lint, the full test
 suite, diff hygiene, canonical version identity, all six CLI entry points,
-wheel metadata, bundled intelligence data, and build-artifact cleanup.
+wheel metadata, bundled intelligence data, build-artifact cleanup, and a fresh
+wheel installation in an isolated virtual environment. The fresh-install check
+also validates dependency consistency with `pip check`, installed package
+version identity, packaged intelligence availability, and startup of all six
+installed CLI entry points.
 
 Public release remains blocked by two deliberate policy decisions:
 

@@ -126,6 +126,70 @@ def build_and_verify_wheel(version: str) -> None:
                 shutil.rmtree(path)
 
 
+def verify_fresh_install(version: str) -> None:
+    generated_paths = (
+        ROOT / "build",
+        ROOT / "src" / "php_sentinel.egg-info",
+    )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="php-sentinel-fresh-install-") as tmp:
+            base = Path(tmp)
+            wheel_dir = base / "wheel"
+            venv_dir = base / "venv"
+            wheel_dir.mkdir()
+
+            run(
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                ".",
+                "--no-deps",
+                "--wheel-dir",
+                str(wheel_dir),
+            )
+
+            wheels = sorted(wheel_dir.glob("*.whl"))
+            if len(wheels) != 1:
+                raise SystemExit(f"Expected one wheel for fresh install, found {len(wheels)}.")
+
+            wheel = wheels[0]
+            run(sys.executable, "-m", "venv", str(venv_dir))
+            fresh_python = venv_dir / "bin" / "python"
+            fresh_bin = venv_dir / "bin"
+
+            run(str(fresh_python), "-m", "pip", "install", str(wheel))
+            run(str(fresh_python), "-m", "pip", "check")
+
+            result = run(
+                str(fresh_python),
+                "-c",
+                'from importlib.metadata import version; from importlib.resources import files; import php_sentinel; p=files("php_sentinel").joinpath("data/intelligence/php-2026-10-critical.json"); print(version("php-sentinel")); print(php_sentinel.__version__); print(len(p.read_bytes()))',
+                capture=True,
+            )
+            lines = result.stdout.strip().splitlines()
+            if len(lines) != 3 or lines[0] != version or lines[1] != version:
+                raise SystemExit("Fresh-install package version identity is inconsistent.")
+            if int(lines[2]) <= 0:
+                raise SystemExit("Fresh-install bundled intelligence resource is empty.")
+
+            for command in EXPECTED_COMMANDS:
+                executable = fresh_bin / command
+                observed = run(str(executable), "--version", capture=True).stdout.strip()
+                if observed != version:
+                    raise SystemExit(
+                        f"Fresh-install {command} reported {observed!r}; expected {version!r}."
+                    )
+                run(str(executable), "--help", capture=True)
+
+            print(f"Verified fresh wheel installation for PHP Sentinel {version}.")
+    finally:
+        for path in generated_paths:
+            if path.exists():
+                shutil.rmtree(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run PHP Sentinel release-readiness checks.")
     parser.add_argument(
@@ -146,6 +210,7 @@ def main() -> None:
     version = canonical_version()
     verify_cli_versions(version)
     build_and_verify_wheel(version)
+    verify_fresh_install(version)
 
     print(f"Release checks passed for PHP Sentinel {version}.")
 
