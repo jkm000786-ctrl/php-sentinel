@@ -495,22 +495,20 @@ def lifecycle_state_lock(
 
             os.fsync(descriptor)
 
-            os.close(descriptor)
-            descriptor = None
-
             yield anchor
 
         finally:
-            if descriptor is not None:
-                os.close(descriptor)
-
-            if acquired_status is not None:
-                _unlink_relative_if_identity_matches(
-                    anchor,
-                    lock_name,
-                    acquired_status,
-                    description="Lifecycle-state lock",
-                )
+            try:
+                if acquired_status is not None:
+                    _unlink_relative_if_identity_matches(
+                        anchor,
+                        lock_name,
+                        acquired_status,
+                        description="Lifecycle-state lock",
+                    )
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
 
     finally:
         _close_state_directory(anchor)
