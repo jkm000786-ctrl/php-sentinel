@@ -96,6 +96,7 @@ def assess_response(
 
     if not detection.detected:
         result.status = AssessmentStatus.NOT_PHP
+        result.exposure_priority = "none"
         result.rationale.append("No sufficiently strong PHP indicator was observed.")
         result.remediation = list(remediation_for(result.status))
         return result

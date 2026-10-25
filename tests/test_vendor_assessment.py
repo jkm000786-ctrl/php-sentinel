@@ -70,3 +70,19 @@ def test_no_fix_evidence_is_potentially_affected_not_confirmed_vulnerable():
     )
 
     assert result.status == AssessmentStatus.POTENTIALLY_AFFECTED
+
+
+def test_non_php_response_has_no_exposure_priority():
+    request = httpx.Request("GET", "https://example.test/")
+    response = httpx.Response(
+        200,
+        headers={"Server": "nginx"},
+        text="ok",
+        request=request,
+    )
+
+    result = assess_response("https://example.test/", response)
+
+    assert result.status == AssessmentStatus.NOT_PHP
+    assert result.exposure_priority == "none"
+    assert result.applicable_cves == []
