@@ -1,4 +1,4 @@
-.PHONY: install test lint docker-build docker-lab-up docker-down
+.PHONY: install test lint release-check release-check-dev docker-build docker-lab-up docker-down
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -8,6 +8,12 @@ test:
 
 lint:
 	ruff check src tests
+
+release-check:
+	python3 scripts/release_check.py
+
+release-check-dev:
+	python3 scripts/release_check.py --allow-dirty
 
 docker-build:
 	docker compose build scanner
