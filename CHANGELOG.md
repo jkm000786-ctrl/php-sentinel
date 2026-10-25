@@ -2,7 +2,7 @@
 
 All notable PHP Sentinel changes will be documented here.
 
-## Unreleased
+## 0.1.0 - 2026-10-25
 
 ### Security
 
@@ -23,5 +23,5 @@ All notable PHP Sentinel changes will be documented here.
 ### Release status
 
 - Version remains `0.1.0`.
-- Public-release readiness remains in progress.
-- No project license has been selected yet.
+- Public-release readiness checks are complete.
+- Licensed under Apache-2.0 and published on GitHub.
