@@ -6,7 +6,25 @@ build-backend = "setuptools.build_meta"
 name = "php-sentinel"
 dynamic = ["version"]
 description = "Evidence-driven PHP vulnerability exposure assessment"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+  {name = "Jahangir Karim"},
+]
+keywords = [
+  "application-security",
+  "php",
+  "vulnerability-assessment",
+  "security-intelligence",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Information Technology",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Security",
+]
 dependencies = [
   "httpx>=0.28,<1",
   "pydantic>=2.10,<3",

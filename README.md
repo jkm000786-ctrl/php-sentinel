@@ -51,3 +51,22 @@ docker compose run --rm scanner analyze http://host.docker.internal:8080
 ```
 
 Only assess systems you own or are explicitly authorized to test.
+
+## Project status
+
+PHP Sentinel is currently a pre-1.0 security engineering project. The current
+package version is `0.1.0`.
+
+Release governance:
+
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+- [Release process](RELEASE.md)
+
+A project license has not yet been selected. Do not assume redistribution or
+modification rights until an explicit license is added.
+
+Installed commands expose the package identity directly:
+
+    php-sentinel --version
+    php-sentinel-update --version
