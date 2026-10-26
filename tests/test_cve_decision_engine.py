@@ -137,3 +137,26 @@ def test_decision_engine_accepts_policy_injection():
     assert statuses(report) == {"potentially_affected"}
 
     assert all(item.fixed_version == "8.5.13" for item in report.decisions)
+
+
+
+def test_default_decision_policy_cannot_be_poisoned_by_mutating_a_prior_default():
+    from php_sentinel.intelligence.repository import default_policy
+    from php_sentinel.models.cve_decision import CVEDecisionStatus
+
+    poisoned = default_policy()
+    poisoned.fixed_versions["8.5"] = "8.5.13"
+
+    report = decide_cves(
+        php_detected=True,
+        php_version="8.5.12",
+        vendor_family="upstream",
+        backport_status="unknown",
+        sapi_hypothesis="mod_php",
+    )
+
+    assert report.decisions
+    assert all(
+        decision.status == CVEDecisionStatus.PATCHED_UPSTREAM
+        for decision in report.decisions
+    )

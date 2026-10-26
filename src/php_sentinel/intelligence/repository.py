@@ -172,8 +172,12 @@ def load_policy(
 
 
 @lru_cache(maxsize=1)
-def default_policy() -> IntelligencePolicy:
+def _default_policy_template() -> IntelligencePolicy:
     return load_policy()
+
+
+def default_policy() -> IntelligencePolicy:
+    return _default_policy_template().model_copy(deep=True)
 
 
 def fixed_version_for_branch(

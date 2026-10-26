@@ -21,8 +21,6 @@ from php_sentinel.models.intelligence_policy import (
     IntelligencePolicy,
 )
 
-_POLICY = default_policy()
-
 
 def _priority_from_name(
     value: str,
@@ -36,7 +34,7 @@ def _priority_from_name(
 def _priority(
     sapi: str | None,
     *,
-    policy: IntelligencePolicy = _POLICY,
+    policy: IntelligencePolicy,
 ) -> ExposurePriority:
     normalized = (sapi or "").strip().lower()
 
@@ -56,7 +54,7 @@ def _remediation(
     definition: CVEPolicy,
     fixed_version: str | None,
     *,
-    policy: IntelligencePolicy = _POLICY,
+    policy: IntelligencePolicy,
 ) -> list[str]:
     items: list[str] = []
 
@@ -78,7 +76,7 @@ def _decision_for_cve(
     vendor_family: str | None,
     backport_status: str | None,
     sapi_hypothesis: str | None,
-    policy: IntelligencePolicy = _POLICY,
+    policy: IntelligencePolicy,
 ) -> CVEDecision:
     priority = _priority(
         sapi_hypothesis,
@@ -296,7 +294,7 @@ def decide_cves(
     sapi_hypothesis: str | None = None,
     policy: IntelligencePolicy | None = None,
 ) -> CVEDecisionReport:
-    selected = policy or _POLICY
+    selected = policy or default_policy()
 
     decisions = [
         _decision_for_cve(

@@ -138,3 +138,18 @@ def test_unsupported_schema_fails_closed(
         match="Unsupported intelligence policy",
     ):
         load_policy(path)
+
+
+
+def test_default_policy_returns_isolated_objects():
+    first = default_policy()
+    second = default_policy()
+
+    assert first is not second
+
+    first.fixed_versions["8.5"] = "8.5.13"
+
+    fresh = default_policy()
+
+    assert fresh.fixed_versions["8.5"] == "8.5.12"
+    assert second.fixed_versions["8.5"] == "8.5.12"
