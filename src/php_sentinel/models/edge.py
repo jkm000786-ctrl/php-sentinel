@@ -11,6 +11,9 @@ class EdgeProvider(str, Enum):
     IMPERVA = "imperva"
     FASTLY = "fastly"
     BUNNYCDN = "bunnycdn"
+    AWS_CLOUDFRONT = "aws_cloudfront"
+    SUCURI = "sucuri"
+    AZURE_EDGE = "azure_edge"
     MODSECURITY = "modsecurity"
     GENERIC_CDN = "generic_cdn"
     GENERIC_WAF = "generic_waf"
@@ -45,8 +48,11 @@ class EdgeSignal(BaseModel):
 
 class EdgeAssessment(BaseModel):
     edge_detected: bool = False
+    waf_detected: bool = False
     provider: EdgeProvider = EdgeProvider.NONE
     provider_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    provider_ambiguous: bool = False
+    provider_candidates: list[EdgeProvider] = Field(default_factory=list)
     response_class: EdgeResponseClass = EdgeResponseClass.UNKNOWN
     application_reachability: ApplicationReachability = (
         ApplicationReachability.UNKNOWN

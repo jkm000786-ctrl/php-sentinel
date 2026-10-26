@@ -7,6 +7,10 @@ All notable PHP Sentinel changes will be documented here.
 
 ### Security
 
+- Hardened passive edge-provider attribution with explicit ambiguity handling so conflicting strong provider signals fail to `unknown` instead of forcing a single attribution.
+- Added conservative passive fingerprints for AWS CloudFront, Sucuri, and Azure edge infrastructure while preserving the distinction between CDN evidence and WAF evidence.
+- Reduced edge/WAF false positives: generic 403 and generic rejection text no longer establish a WAF, and edge-only responses remain application-reachability `unknown` without independent PHP evidence.
+- Sanitized opaque edge request identifiers from retained edge signal evidence.
 - Added a passive Edge Security Intelligence foundation that distinguishes application responses from CDN/WAF challenges, explicit WAF blocks, rate limiting, and edge-origin failures without introducing public-target evasion behavior.
 - Added evidence-weighted provider classification for Cloudflare, Akamai, Imperva, Fastly, BunnyCDN, ModSecurity, and conservative generic edge/WAF signals.
 - Clarified the canonical intelligence authority boundary: `php-sentinel scan` is provenance-bearing, while `analyze` and `php-sentinel-cve` are explicitly diagnostic bundled-policy surfaces.
