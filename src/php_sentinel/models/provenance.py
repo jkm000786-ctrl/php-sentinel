@@ -12,6 +12,16 @@ class EvidenceProvenance(BaseModel):
     canonical_sha256: str
     target_identity_sha256: str
 
+    edge_detected: bool | None = None
+    waf_detected: bool | None = None
+    edge_provider: str | None = None
+    edge_provider_confidence: float | None = None
+    edge_provider_ambiguous: bool | None = None
+    edge_response_class: str | None = None
+    application_reachability: str | None = None
+    edge_challenge_detected: bool | None = None
+    edge_rate_limited: bool | None = None
+
     intelligence_policy_id: str | None = None
     intelligence_schema_version: int | None = None
     intelligence_published_date: str | None = None

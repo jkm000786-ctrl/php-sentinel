@@ -239,3 +239,34 @@ def test_consistency_validator_accepts_all_terminal_states(
         cve_report=cve_report,
         findings=findings,
     )
+
+
+def test_consistency_rejects_potential_exposure_when_edge_not_reached():
+    from php_sentinel.models.edge import (
+        ApplicationReachability,
+        EdgeAssessment,
+        EdgeProvider,
+        EdgeResponseClass,
+    )
+
+    assessment, cve_report, findings = _components()
+
+    edge = EdgeAssessment(
+        edge_detected=True,
+        waf_detected=True,
+        provider=EdgeProvider.CLOUDFLARE,
+        response_class=EdgeResponseClass.BOT_CHALLENGE,
+        application_reachability=ApplicationReachability.NOT_REACHED,
+        challenge_detected=True,
+    )
+
+    with pytest.raises(
+        CrossLayerConsistencyError,
+        match="Edge-gated application evidence",
+    ):
+        validate_cross_layer_consistency(
+            assessment=assessment,
+            cve_report=cve_report,
+            findings=findings,
+            edge_assessment=edge,
+        )

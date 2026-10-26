@@ -7,6 +7,10 @@ All notable PHP Sentinel changes will be documented here.
 
 ### Security
 
+- Integrated passive edge/WAF classification into the canonical unified assessment authority path before PHP, SAPI, CVE, and finding conclusions are accepted.
+- Edge responses, WAF blocks, bot challenges, rate limits, and recognized origin failures now fail closed to an `inconclusive` application assessment when application reachability is `unknown` or `not_reached`.
+- Bound edge provider, response class, application reachability, challenge/rate-limit state, and ambiguity into canonical assessment provenance and target identity.
+- Added cross-layer invariants preventing edge-gated evidence from coexisting with potential-exposure or other non-inconclusive CVE/finding conclusions.
 - Hardened passive edge-provider attribution with explicit ambiguity handling so conflicting strong provider signals fail to `unknown` instead of forcing a single attribution.
 - Added conservative passive fingerprints for AWS CloudFront, Sucuri, and Azure edge infrastructure while preserving the distinction between CDN evidence and WAF evidence.
 - Reduced edge/WAF false positives: generic 403 and generic rejection text no longer establish a WAF, and edge-only responses remain application-reachability `unknown` without independent PHP evidence.

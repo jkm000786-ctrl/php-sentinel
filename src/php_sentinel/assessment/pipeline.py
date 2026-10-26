@@ -5,6 +5,7 @@ import hashlib
 from php_sentinel.assessment.consistency import validate_cross_layer_consistency
 from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.finding_engine import build_findings
+from php_sentinel.detection.edge_detector import classify_edge_response
 from php_sentinel.evidence.provenance import build_provenance
 from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.activation import (
@@ -14,6 +15,17 @@ from php_sentinel.intelligence.cve_decision_engine import decide_cves
 from php_sentinel.intelligence.repository import (
     default_policy,
     policy_identity,
+)
+from php_sentinel.models.assessment import Assessment, AssessmentStatus
+from php_sentinel.models.cve_decision import (
+    CVEDecisionStatus,
+    DecisionConfidence,
+    ExposurePriority,
+)
+from php_sentinel.models.edge import (
+    ApplicationReachability,
+    EdgeAssessment,
+    EdgeResponseClass,
 )
 from php_sentinel.models.intelligence_lifecycle import IntelligenceLifecycleDecision
 from php_sentinel.models.intelligence_policy import IntelligencePolicy
@@ -58,6 +70,53 @@ def build_vendor_evidence(
         backport_status=backport_status,
         advisory_reference=advisory_reference,
         source="operator-supplied",
+    )
+
+
+def _edge_blocks_application_assessment(
+    edge_assessment: EdgeAssessment,
+) -> bool:
+    return (
+        edge_assessment.response_class
+        != EdgeResponseClass.APPLICATION_RESPONSE
+        or edge_assessment.application_reachability
+        in {
+            ApplicationReachability.UNKNOWN,
+            ApplicationReachability.NOT_REACHED,
+        }
+    )
+
+
+def _build_edge_inconclusive_assessment(
+    *,
+    target: str,
+    response,
+    edge_assessment: EdgeAssessment,
+) -> Assessment:
+    reason = (
+        "Application-layer assessment suppressed because the observed "
+        f"response class is {edge_assessment.response_class.value} and "
+        "application reachability is "
+        f"{edge_assessment.application_reachability.value}."
+    )
+
+    return Assessment(
+        target=target,
+        php_detected=False,
+        php_version=None,
+        php_confidence=0.0,
+        server=response.headers.get("server"),
+        x_powered_by=None,
+        exposure_priority=ExposurePriority.UNKNOWN.value,
+        status=AssessmentStatus.INCONCLUSIVE,
+        applicable_cves=[],
+        rationale=[*edge_assessment.rationale, reason],
+        remediation=[
+            (
+                "Obtain a permitted application-layer response before "
+                "drawing PHP runtime or CVE applicability conclusions."
+            )
+        ],
     )
 
 
@@ -119,23 +178,92 @@ def run_unified_assessment(
         timeout=timeout,
     )
 
-    assessment = assess_response(
-        target,
-        response,
-        vendor_evidence=vendor_evidence,
-        policy=selected_policy,
-    )
+    edge_assessment = classify_edge_response(response)
 
-    assessment_vendor = assessment.vendor_evidence
+    if _edge_blocks_application_assessment(edge_assessment):
+        assessment = _build_edge_inconclusive_assessment(
+            target=target,
+            response=response,
+            edge_assessment=edge_assessment,
+        )
 
-    cve_report = decide_cves(
-        php_detected=assessment.php_detected,
-        php_version=assessment.php_version,
-        vendor_family=(assessment_vendor.vendor.value if assessment_vendor else None),
-        backport_status=(assessment_vendor.backport_status.value if assessment_vendor else None),
-        sapi_hypothesis=assessment.fingerprint.sapi.value,
-        policy=selected_policy,
-    )
+        seed_report = decide_cves(
+            php_detected=True,
+            php_version=None,
+            vendor_family=None,
+            backport_status=None,
+            sapi_hypothesis="unknown",
+            policy=selected_policy,
+        )
+
+        edge_reason = (
+            "CVE applicability is inconclusive because PHP Sentinel did "
+            "not establish application-layer reachability."
+        )
+
+        decisions = [
+            decision.model_copy(
+                update={
+                    "status": CVEDecisionStatus.INCONCLUSIVE,
+                    "confidence": DecisionConfidence.LOW,
+                    "exposure_priority": ExposurePriority.UNKNOWN,
+                    "detected_version": None,
+                    "rationale": [
+                        edge_reason,
+                        *decision.rationale,
+                    ],
+                    "remediation": [
+                        (
+                            "Obtain a permitted application-layer response "
+                            "before evaluating this CVE."
+                        )
+                    ],
+                }
+            )
+            for decision in seed_report.decisions
+        ]
+
+        cve_report = seed_report.model_copy(
+            update={
+                "php_detected": False,
+                "php_version": None,
+                "vendor_family": None,
+                "backport_status": None,
+                "sapi_hypothesis": "unknown",
+                "decisions": decisions,
+                "notes": [
+                    *seed_report.notes,
+                    edge_reason,
+                ],
+            }
+        )
+
+    else:
+        assessment = assess_response(
+            target,
+            response,
+            vendor_evidence=vendor_evidence,
+            policy=selected_policy,
+        )
+
+        assessment_vendor = assessment.vendor_evidence
+
+        cve_report = decide_cves(
+            php_detected=assessment.php_detected,
+            php_version=assessment.php_version,
+            vendor_family=(
+                assessment_vendor.vendor.value
+                if assessment_vendor
+                else None
+            ),
+            backport_status=(
+                assessment_vendor.backport_status.value
+                if assessment_vendor
+                else None
+            ),
+            sapi_hypothesis=assessment.fingerprint.sapi.value,
+            policy=selected_policy,
+        )
 
     body = response.content
 
@@ -155,12 +283,14 @@ def run_unified_assessment(
         target=target,
         assessment=assessment,
         cve_report=cve_report,
+        edge_assessment=edge_assessment,
     )
 
     validate_cross_layer_consistency(
         assessment=assessment,
         cve_report=cve_report,
         findings=findings,
+        edge_assessment=edge_assessment,
     )
 
     intelligence_identity = policy_identity(selected_policy)
@@ -169,6 +299,7 @@ def run_unified_assessment(
         "target": target,
         "intelligence_policy": intelligence_identity,
         "http": metadata.model_dump(mode="json"),
+        "edge": edge_assessment.model_dump(mode="json"),
         "assessment": assessment.model_dump(mode="json"),
         "cve_decisions": cve_report.model_dump(mode="json"),
         "findings": [finding.model_dump(mode="json") for finding in findings],
@@ -179,12 +310,18 @@ def run_unified_assessment(
         "final_url": metadata.final_url,
         "server": metadata.server,
         "php_version": assessment.php_version,
+        "edge_provider": edge_assessment.provider.value,
+        "edge_response_class": edge_assessment.response_class.value,
+        "application_reachability": (
+            edge_assessment.application_reachability.value
+        ),
         "body_sha256": metadata.body_sha256,
     }
 
     provenance = build_provenance(
         canonical_payload=canonical_payload,
         target_identity_payload=(target_identity_payload),
+        edge_assessment=edge_assessment,
         intelligence_selection=(provenance_selection),
         intelligence_policy=(selected_policy if provenance_selection is None else None),
     )
@@ -192,6 +329,7 @@ def run_unified_assessment(
     return UnifiedAssessmentReport(
         target=target,
         http=metadata,
+        edge=edge_assessment,
         assessment=assessment,
         cve_decisions=cve_report,
         findings=findings,
@@ -205,6 +343,10 @@ def run_unified_assessment(
             (
                 "Response bodies are not persisted in unified evidence; "
                 "only their length and SHA-256 digest are retained."
+            ),
+            (
+                "Edge/WAF observations are authoritative constraints on "
+                "whether application evidence may be interpreted."
             ),
             ("CVE applicability is not equivalent to successful exploitation."),
         ],

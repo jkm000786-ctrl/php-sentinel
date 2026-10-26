@@ -497,6 +497,18 @@ def scan(
         str(report.http.redirect_count),
     )
     summary.add_row(
+        "Edge provider",
+        report.edge.provider.value,
+    )
+    summary.add_row(
+        "Edge response class",
+        report.edge.response_class.value,
+    )
+    summary.add_row(
+        "Application reachability",
+        report.edge.application_reachability.value,
+    )
+    summary.add_row(
         "PHP detected",
         str(assessment.php_detected),
     )

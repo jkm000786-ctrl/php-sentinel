@@ -21,6 +21,7 @@ from php_sentinel.intelligence.repository import (
 from php_sentinel.intelligence.trust import (
     resolve_policy_trust,
 )
+from php_sentinel.models.edge import EdgeAssessment
 from php_sentinel.models.intelligence_lifecycle import (
     IntelligenceLifecycleDecision,
 )
@@ -92,6 +93,7 @@ def build_provenance(
     *,
     canonical_payload: dict,
     target_identity_payload: dict,
+    edge_assessment: EdgeAssessment | None = None,
     intelligence_selection: VerifiedIntelligenceSelection | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
     intelligence_trust: IntelligenceTrustDecision | None = None,
@@ -139,6 +141,29 @@ def build_provenance(
         policy_version=POLICY_VERSION,
         canonical_sha256=sha256_payload(canonical_payload),
         target_identity_sha256=(sha256_payload(target_identity_payload)),
+        edge_detected=(edge_assessment.edge_detected if edge_assessment else None),
+        waf_detected=(edge_assessment.waf_detected if edge_assessment else None),
+        edge_provider=(edge_assessment.provider.value if edge_assessment else None),
+        edge_provider_confidence=(
+            edge_assessment.provider_confidence if edge_assessment else None
+        ),
+        edge_provider_ambiguous=(
+            edge_assessment.provider_ambiguous if edge_assessment else None
+        ),
+        edge_response_class=(
+            edge_assessment.response_class.value if edge_assessment else None
+        ),
+        application_reachability=(
+            edge_assessment.application_reachability.value
+            if edge_assessment
+            else None
+        ),
+        edge_challenge_detected=(
+            edge_assessment.challenge_detected if edge_assessment else None
+        ),
+        edge_rate_limited=(
+            edge_assessment.rate_limited if edge_assessment else None
+        ),
         intelligence_policy_id=str(identity["policy_id"]),
         intelligence_schema_version=int(identity["schema_version"]),
         intelligence_published_date=str(identity["published_date"]),

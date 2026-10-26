@@ -183,3 +183,97 @@ def test_unified_pipeline_uses_one_policy_across_decision_layers(mock_fetch):
     assert set(report.assessment.applicable_cves) == {
         item.cve_id for item in report.cve_decisions.decisions
     }
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_edge_challenge_suppresses_application_assessment(mock_fetch):
+    mock_fetch.return_value = httpx.Response(
+        403,
+        request=httpx.Request("GET", "https://example.test/"),
+        headers={
+            "Server": "cloudflare",
+            "CF-Ray": "opaque-trace",
+            "CF-Mitigated": "challenge",
+            "X-Powered-By": "PHP/8.5.11",
+        },
+        text="<title>Just a moment...</title>",
+    )
+
+    report = run_unified_assessment(
+        "https://example.test/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    assert report.edge.response_class.value == "bot_challenge"
+    assert report.edge.application_reachability.value == "not_reached"
+    assert report.assessment.status.value == "inconclusive"
+    assert report.assessment.php_detected is False
+    assert report.assessment.php_version is None
+    assert report.assessment.exposure_priority == "unknown"
+    assert report.assessment.applicable_cves == []
+    assert {
+        item.status.value
+        for item in report.cve_decisions.decisions
+    } == {"inconclusive"}
+    assert {
+        item.state.value
+        for item in report.findings
+    } == {"inconclusive"}
+    assert report.provenance.edge_provider == "cloudflare"
+    assert report.provenance.edge_response_class == "bot_challenge"
+    assert report.provenance.application_reachability == "not_reached"
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_edge_only_response_cannot_create_php_exposure(mock_fetch):
+    mock_fetch.return_value = httpx.Response(
+        403,
+        request=httpx.Request("GET", "https://example.test/"),
+        headers={
+            "X-Amz-Cf-Id": "opaque-id",
+            "X-Amz-Cf-Pop": "KHI50-P1",
+            "Via": "1.1 example.cloudfront.net (CloudFront)",
+        },
+        text="PHP Version 8.5.11",
+    )
+
+    report = run_unified_assessment("https://example.test/")
+
+    assert report.edge.provider.value == "aws_cloudfront"
+    assert report.edge.response_class.value == "edge_response"
+    assert report.edge.application_reachability.value == "unknown"
+    assert report.assessment.status.value == "inconclusive"
+    assert report.assessment.php_detected is False
+    assert report.assessment.php_confidence == 0.0
+    assert all(
+        item.state.value == "inconclusive"
+        for item in report.findings
+    )
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_edge_with_independent_php_evidence_keeps_normal_pipeline(mock_fetch):
+    mock_fetch.return_value = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://example.test/"),
+        headers={
+            "Server": "cloudflare",
+            "CF-Ray": "opaque-id",
+            "X-Powered-By": "PHP/8.5.11",
+        },
+        text="application",
+    )
+
+    report = run_unified_assessment(
+        "https://example.test/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    assert report.edge.response_class.value == "application_response"
+    assert report.edge.application_reachability.value == "probable"
+    assert report.assessment.php_detected is True
+    assert report.assessment.status.value == "potentially_affected"
+    assert {
+        item.state.value
+        for item in report.findings
+    } == {"potential_exposure"}

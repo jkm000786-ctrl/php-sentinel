@@ -16,6 +16,12 @@ def render_markdown_report(
         f"- **Target:** `{report.target}`",
         f"- **Final URL:** `{report.http.final_url}`",
         f"- **HTTP status:** {report.http.status_code}",
+        (f"- **Edge provider:** `{report.edge.provider.value}`"),
+        (f"- **Edge response class:** `{report.edge.response_class.value}`"),
+        (
+            "- **Application reachability:** "
+            f"`{report.edge.application_reachability.value}`"
+        ),
         (f"- **PHP detected:** {assessment.php_detected}"),
         (f"- **PHP version:** {assessment.php_version or 'unknown'}"),
         (f"- **Server:** {assessment.server or 'unknown'}"),
@@ -26,6 +32,24 @@ def render_markdown_report(
         ),
         (f"- **Overall assessment:** `{assessment.status.value}`"),
         (f"- **Exposure priority:** `{assessment.exposure_priority}`"),
+        "",
+        "## Edge Security Context",
+        "",
+        f"- **Edge detected:** {report.edge.edge_detected}",
+        f"- **WAF detected:** {report.edge.waf_detected}",
+        f"- **Provider:** `{report.edge.provider.value}`",
+        (
+            "- **Provider confidence:** "
+            f"{report.edge.provider_confidence:.0%}"
+        ),
+        f"- **Provider ambiguous:** {report.edge.provider_ambiguous}",
+        f"- **Response class:** `{report.edge.response_class.value}`",
+        (
+            "- **Application reachability:** "
+            f"`{report.edge.application_reachability.value}`"
+        ),
+        f"- **Challenge detected:** {report.edge.challenge_detected}",
+        f"- **Rate limited:** {report.edge.rate_limited}",
         "",
         "## Evidence Provenance",
         "",
@@ -49,6 +73,18 @@ def render_markdown_report(
         (f"- **Manifest expires at:** `{report.provenance.intelligence_expires_at or 'n/a'}`"),
         (f"- **Canonical evidence SHA-256:** `{report.provenance.canonical_sha256}`"),
         (f"- **Target identity SHA-256:** `{report.provenance.target_identity_sha256}`"),
+        (
+            "- **Provenance edge provider:** "
+            f"`{report.provenance.edge_provider or 'unknown'}`"
+        ),
+        (
+            "- **Provenance response class:** "
+            f"`{report.provenance.edge_response_class or 'unknown'}`"
+        ),
+        (
+            "- **Provenance application reachability:** "
+            f"`{report.provenance.application_reachability or 'unknown'}`"
+        ),
         "",
         (
             "> `bundled_trusted` means package-local PHP Sentinel trust; "

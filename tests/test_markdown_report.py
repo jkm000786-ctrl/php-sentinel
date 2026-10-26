@@ -42,3 +42,7 @@ def test_markdown_contains_findings_and_boundary(mock_fetch):
     assert "Intelligence trust" in markdown
     assert "Intelligence signer" in markdown
     assert "Lifecycle state" in markdown
+    assert "Edge Security Context" in markdown
+    assert "Edge response class" in markdown
+    assert "Application reachability" in markdown
+    assert "Provenance edge provider" in markdown

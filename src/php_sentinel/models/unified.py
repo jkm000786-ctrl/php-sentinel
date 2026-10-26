@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from php_sentinel.models.assessment import Assessment
 from php_sentinel.models.cve_decision import CVEDecisionReport
+from php_sentinel.models.edge import EdgeAssessment
 from php_sentinel.models.finding import Finding
 from php_sentinel.models.provenance import EvidenceProvenance
 from php_sentinel.models.validation import ValidationReport
@@ -27,6 +28,7 @@ class UnifiedAssessmentReport(BaseModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     target: str
     http: HTTPMetadata
+    edge: EdgeAssessment = Field(default_factory=EdgeAssessment)
     assessment: Assessment
     cve_decisions: CVEDecisionReport
     findings: list[Finding] = Field(default_factory=list)

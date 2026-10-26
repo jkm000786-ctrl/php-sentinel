@@ -6,6 +6,7 @@ from php_sentinel.models.cve_decision import (
     CVEDecisionReport,
     CVEDecisionStatus,
 )
+from php_sentinel.models.edge import EdgeAssessment
 from php_sentinel.models.finding import (
     Finding,
     FindingSeverity,
@@ -63,6 +64,7 @@ def build_findings(
     target: str,
     assessment: Assessment,
     cve_report: CVEDecisionReport,
+    edge_assessment: EdgeAssessment | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
 
@@ -79,6 +81,23 @@ def build_findings(
             ),
             (f"Overall assessment: {assessment.status.value}"),
         ]
+
+        if edge_assessment is not None:
+            evidence.extend(
+                [
+                    f"Edge detected: {edge_assessment.edge_detected}",
+                    f"WAF detected: {edge_assessment.waf_detected}",
+                    f"Edge provider: {edge_assessment.provider.value}",
+                    (
+                        "Edge response class: "
+                        f"{edge_assessment.response_class.value}"
+                    ),
+                    (
+                        "Application reachability: "
+                        f"{edge_assessment.application_reachability.value}"
+                    ),
+                ]
+            )
 
         if assessment.vendor_evidence:
             evidence.extend(

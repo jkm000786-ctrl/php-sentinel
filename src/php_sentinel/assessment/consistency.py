@@ -7,6 +7,11 @@ from php_sentinel.models.cve_decision import (
     CVEDecisionStatus,
     ExposurePriority,
 )
+from php_sentinel.models.edge import (
+    ApplicationReachability,
+    EdgeAssessment,
+    EdgeResponseClass,
+)
 from php_sentinel.models.finding import Finding, FindingSeverity, FindingState
 
 
@@ -73,8 +78,52 @@ def validate_cross_layer_consistency(
     assessment: Assessment,
     cve_report: CVEDecisionReport,
     findings: list[Finding],
+    edge_assessment: EdgeAssessment | None = None,
 ) -> None:
     """Fail closed when independently derived report layers contradict each other."""
+
+    edge_application_suppressed = False
+
+    if edge_assessment is not None:
+        edge_application_suppressed = (
+            edge_assessment.response_class != EdgeResponseClass.APPLICATION_RESPONSE
+            or edge_assessment.application_reachability
+            in {
+                ApplicationReachability.UNKNOWN,
+                ApplicationReachability.NOT_REACHED,
+            }
+        )
+
+        if edge_application_suppressed:
+            if assessment.status != AssessmentStatus.INCONCLUSIVE:
+                _fail(
+                    "Edge-gated application evidence must produce an "
+                    "inconclusive top-level assessment."
+                )
+
+            if assessment.exposure_priority != ExposurePriority.UNKNOWN.value:
+                _fail(
+                    "Edge-gated application evidence must have unknown "
+                    "exposure priority."
+                )
+
+            if any(
+                item.status != CVEDecisionStatus.INCONCLUSIVE
+                for item in cve_report.decisions
+            ):
+                _fail(
+                    "Edge-gated application evidence must produce only "
+                    "inconclusive CVE decisions."
+                )
+
+            if any(
+                item.state != FindingState.INCONCLUSIVE
+                for item in findings
+            ):
+                _fail(
+                    "Edge-gated application evidence must produce only "
+                    "inconclusive findings."
+                )
 
     if cve_report.php_detected != assessment.php_detected:
         _fail("PHP detection state differs between assessment and CVE report.")
@@ -148,7 +197,7 @@ def validate_cross_layer_consistency(
         AssessmentStatus.NOT_PHP,
         AssessmentStatus.PATCHED_UPSTREAM,
         AssessmentStatus.PATCHED_VENDOR,
-    }:
+    } or edge_application_suppressed:
         expected_applicable_cves: set[str] = set()
     else:
         expected_applicable_cves = decision_id_set

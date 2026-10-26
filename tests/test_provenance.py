@@ -208,3 +208,36 @@ def test_bundled_provenance_contains_current_lifecycle():
     assert provenance.intelligence_lifecycle_state == "current"
 
     assert provenance.intelligence_generation is None
+
+
+def test_provenance_binds_edge_security_context():
+    from php_sentinel.models.edge import (
+        ApplicationReachability,
+        EdgeAssessment,
+        EdgeProvider,
+        EdgeResponseClass,
+    )
+
+    edge = EdgeAssessment(
+        edge_detected=True,
+        waf_detected=True,
+        provider=EdgeProvider.CLOUDFLARE,
+        provider_confidence=1.0,
+        response_class=EdgeResponseClass.BOT_CHALLENGE,
+        application_reachability=ApplicationReachability.NOT_REACHED,
+        challenge_detected=True,
+    )
+
+    provenance = build_provenance(
+        canonical_payload={"target": "edge-test"},
+        target_identity_payload={"target": "edge-test"},
+        edge_assessment=edge,
+    )
+
+    assert provenance.edge_detected is True
+    assert provenance.waf_detected is True
+    assert provenance.edge_provider == "cloudflare"
+    assert provenance.edge_provider_confidence == 1.0
+    assert provenance.edge_response_class == "bot_challenge"
+    assert provenance.application_reachability == "not_reached"
+    assert provenance.edge_challenge_detected is True
