@@ -54,7 +54,7 @@ def main(
         Path | None,
         typer.Option(
             "--evidence-out",
-            help="Write CVE decision evidence as JSON.",
+            help="Write diagnostic CVE decision JSON without canonical assessment provenance.",
         ),
     ] = None,
     version: Annotated[
@@ -75,6 +75,15 @@ def main(
         sapi_hypothesis=sapi,
     )
 
+    diagnostic_note = (
+        "Standalone php-sentinel-cve output is a bundled-policy diagnostic "
+        "decision surface and does not carry canonical assessment provenance. "
+        "Use php-sentinel scan for authoritative provenance-bearing assessment."
+    )
+    report.notes.insert(0, diagnostic_note)
+
+    typer.echo(f"NOTICE: {diagnostic_note}", err=True)
+
     if evidence_out:
         path = write_json_evidence(
             report,
@@ -82,7 +91,7 @@ def main(
         )
         console.print(f"[green]CVE evidence written:[/green] {path}")
 
-    table = Table(title="PHP Sentinel CVE Decision Engine")
+    table = Table(title="PHP Sentinel CVE Decision Engine — Diagnostic")
     table.add_column("CVE")
     table.add_column("Status")
     table.add_column("Confidence")

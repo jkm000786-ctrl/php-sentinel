@@ -11,19 +11,25 @@ class PHPAdvisory:
     description: str
 
 
-_POLICY = default_policy()
+def _legacy_database_snapshot():
+    policy = default_policy()
 
-
-OCT_2026_CRITICAL = tuple(
-    PHPAdvisory(
-        cve=item.cve_id,
-        description=item.description,
+    advisories = tuple(
+        PHPAdvisory(
+            cve=item.cve_id,
+            description=item.description,
+        )
+        for item in policy.cves
     )
-    for item in _POLICY.cves
-)
+
+    fixed_upstream = {
+        tuple(int(part) for part in branch.split(".")): tuple(
+            int(part) for part in version.split(".")
+        )
+        for branch, version in policy.fixed_versions.items()
+    }
+
+    return advisories, fixed_upstream
 
 
-FIXED_UPSTREAM = {
-    tuple(int(part) for part in branch.split(".")): tuple(int(part) for part in version.split("."))
-    for branch, version in _POLICY.fixed_versions.items()
-}
+OCT_2026_CRITICAL, FIXED_UPSTREAM = _legacy_database_snapshot()

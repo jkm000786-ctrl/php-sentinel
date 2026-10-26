@@ -7,6 +7,8 @@ All notable PHP Sentinel changes will be documented here.
 
 ### Security
 
+- Clarified the canonical intelligence authority boundary: `php-sentinel scan` is provenance-bearing, while `analyze` and `php-sentinel-cve` are explicitly diagnostic bundled-policy surfaces.
+- Removed the legacy CVE database module-level policy object so no persistent default intelligence policy object remains outside the repository template cache.
 - Isolated bundled intelligence policy state so mutating one retrieved default policy cannot poison later security decisions.
 - Bound differential laboratory validation to the same verified intelligence selection and provenance model used by authoritative assessment paths.
 

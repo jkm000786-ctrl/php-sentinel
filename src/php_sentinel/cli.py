@@ -49,7 +49,12 @@ def root_options(
     pass
 
 
-@app.command()
+@app.command(
+    help=(
+        "Bundled-policy diagnostic assessment. Use `php-sentinel scan` for "
+        "the canonical provenance-bearing assessment path."
+    )
+)
 def analyze(
     target: Annotated[
         str,
@@ -176,6 +181,13 @@ def analyze(
         target,
         response,
         vendor_evidence=vendor_evidence,
+    )
+
+    typer.echo(
+        "NOTICE: `analyze` is a bundled-policy diagnostic path without "
+        "canonical assessment provenance. Use `php-sentinel scan` for "
+        "authoritative provenance-bearing assessment output.",
+        err=True,
     )
 
     if json_output:

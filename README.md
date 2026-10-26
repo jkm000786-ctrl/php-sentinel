@@ -63,6 +63,22 @@ Release governance:
 - [Changelog](CHANGELOG.md)
 - [Release process](RELEASE.md)
 
+### Assessment authority boundaries
+
+`php-sentinel scan` is the canonical assessment path. It activates bundled or
+externally verified intelligence through the trusted activation boundary and
+produces provenance-bearing unified assessment evidence.
+
+`php-sentinel analyze` and `php-sentinel-cve` are bundled-policy diagnostic
+surfaces. They are useful for local inspection and decision exploration, but
+their output must not be represented as canonical provenance-bearing assessment
+evidence.
+
+`php-sentinel-intel` validates or inspects intelligence material and can verify
+a supplied manifest. Validation or signature verification alone does not
+activate that policy for authoritative assessment; activation occurs through
+the trusted assessment/update boundaries.
+
 PHP Sentinel is licensed under the Apache License 2.0. See `LICENSE` for the
 full license terms.
 
