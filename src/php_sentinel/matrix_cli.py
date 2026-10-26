@@ -8,6 +8,11 @@ from rich.console import Console
 from rich.table import Table
 
 from php_sentinel.evidence.writer import write_json_evidence
+from php_sentinel.intelligence.activation import (
+    IntelligenceActivationError,
+    activate_verified_intelligence,
+)
+from php_sentinel.intelligence.lifecycle import DEFAULT_LIFECYCLE_STATE_PATH
 from php_sentinel.validation.differential import compare_lab_targets
 from php_sentinel.versioning import version_callback
 
@@ -43,6 +48,48 @@ def main(
             help="HTTP timeout in seconds.",
         ),
     ] = 10.0,
+    policy_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--policy",
+            help="External intelligence policy JSON. Requires --manifest and --trust-store.",
+        ),
+    ] = None,
+    manifest_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--manifest",
+            help="Detached signed intelligence manifest. Requires --policy and --trust-store.",
+        ),
+    ] = None,
+    trust_store_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--trust-store",
+            help="Trusted signer store for external intelligence activation.",
+        ),
+    ] = None,
+    minimum_policy_generation: Annotated[
+        int,
+        typer.Option(
+            "--minimum-policy-generation",
+            help="Reject external manifests below this generation.",
+        ),
+    ] = 1,
+    max_policy_age_days: Annotated[
+        int,
+        typer.Option(
+            "--max-policy-age-days",
+            help="Maximum accepted age for an external manifest.",
+        ),
+    ] = 30,
+    lifecycle_state_path: Annotated[
+        Path,
+        typer.Option(
+            "--lifecycle-state",
+            help="Persistent rollback/replay protection state for external intelligence.",
+        ),
+    ] = DEFAULT_LIFECYCLE_STATE_PATH,
     version: Annotated[
         bool,
         typer.Option(
@@ -53,11 +100,27 @@ def main(
         ),
     ] = False,
 ) -> None:
+    try:
+        intelligence_selection = activate_verified_intelligence(
+            policy_path=policy_path,
+            manifest_path=manifest_path,
+            trust_store_path=trust_store_path,
+            lifecycle_state_path=(
+                lifecycle_state_path if policy_path is not None else None
+            ),
+            minimum_generation=minimum_policy_generation,
+            maximum_age_days=max_policy_age_days,
+        )
+    except IntelligenceActivationError as exc:
+        console.print(f"[red]Intelligence activation denied:[/red] {exc}")
+        raise typer.Exit(code=4) from exc
+
     report = compare_lab_targets(
         candidate,
         patched_reference,
         explicit_authorization=authorize_lab,
         timeout=timeout,
+        intelligence_selection=intelligence_selection,
     )
 
     if evidence_out:
@@ -102,6 +165,12 @@ def main(
         report.candidate.body_sha256 or "none",
         report.patched_reference.body_sha256 or "none",
     )
+
+    if report.provenance is not None:
+        policy_id = report.provenance.intelligence_policy_id or "unknown"
+        trust_state = report.provenance.intelligence_trust_state or "unknown"
+        table.add_row("Intelligence policy", policy_id, policy_id)
+        table.add_row("Intelligence trust", trust_state, trust_state)
 
     console.print(table)
 

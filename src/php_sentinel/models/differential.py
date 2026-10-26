@@ -4,6 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from php_sentinel.models.provenance import EvidenceProvenance
 from php_sentinel.models.validation import ValidationReport
 
 
@@ -34,5 +35,6 @@ class DifferentialReport(BaseModel):
     patched_validation: ValidationReport
     authorized: bool
     conclusion: DifferentialConclusion
+    provenance: EvidenceProvenance | None = None
     differences: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
