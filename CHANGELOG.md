@@ -7,6 +7,8 @@ All notable PHP Sentinel changes will be documented here.
 
 ### Security
 
+- Added a passive Edge Security Intelligence foundation that distinguishes application responses from CDN/WAF challenges, explicit WAF blocks, rate limiting, and edge-origin failures without introducing public-target evasion behavior.
+- Added evidence-weighted provider classification for Cloudflare, Akamai, Imperva, Fastly, BunnyCDN, ModSecurity, and conservative generic edge/WAF signals.
 - Clarified the canonical intelligence authority boundary: `php-sentinel scan` is provenance-bearing, while `analyze` and `php-sentinel-cve` are explicitly diagnostic bundled-policy surfaces.
 - Removed the legacy CVE database module-level policy object so no persistent default intelligence policy object remains outside the repository template cache.
 - Isolated bundled intelligence policy state so mutating one retrieved default policy cannot poison later security decisions.
