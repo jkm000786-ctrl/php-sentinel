@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 
+from php_sentinel.assessment.consistency import validate_cross_layer_consistency
 from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.finding_engine import build_findings
 from php_sentinel.evidence.provenance import build_provenance
@@ -122,6 +123,7 @@ def run_unified_assessment(
         target,
         response,
         vendor_evidence=vendor_evidence,
+        policy=selected_policy,
     )
 
     assessment_vendor = assessment.vendor_evidence
@@ -153,6 +155,12 @@ def run_unified_assessment(
         target=target,
         assessment=assessment,
         cve_report=cve_report,
+    )
+
+    validate_cross_layer_consistency(
+        assessment=assessment,
+        cve_report=cve_report,
+        findings=findings,
     )
 
     intelligence_identity = policy_identity(selected_policy)

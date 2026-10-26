@@ -158,3 +158,28 @@ def test_unified_report_binds_intelligence_policy(
     assert report.provenance.intelligence_policy_id == policy.policy_id
 
     assert report.provenance.intelligence_sha256 == policy_sha256(policy)
+
+
+@patch("php_sentinel.assessment.pipeline.fetch")
+def test_unified_pipeline_uses_one_policy_across_decision_layers(mock_fetch):
+    from php_sentinel.intelligence.repository import default_policy
+
+    policy = default_policy().model_copy(deep=True)
+    policy.fixed_versions["8.5"] = "8.5.13"
+
+    mock_fetch.return_value = response("8.5.12", "policy divergence regression")
+
+    report = run_unified_assessment(
+        "http://127.0.0.1/",
+        intelligence_policy=policy,
+    )
+
+    assert report.assessment.status.value == "needs_vendor_evidence"
+    assert report.assessment.exposure_priority == "critical"
+    assert {item.status.value for item in report.cve_decisions.decisions} == {
+        "needs_vendor_evidence"
+    }
+    assert {item.state.value for item in report.findings} == {"needs_evidence"}
+    assert set(report.assessment.applicable_cves) == {
+        item.cve_id for item in report.cve_decisions.decisions
+    }

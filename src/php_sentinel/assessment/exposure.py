@@ -9,10 +9,12 @@ from php_sentinel.detection.server_detector import detect_server_family
 from php_sentinel.intelligence.applicability import evaluate_oct_2026_applicability
 from php_sentinel.intelligence.backport_analyzer import analyze_backport
 from php_sentinel.intelligence.remediation import remediation_for
+from php_sentinel.intelligence.repository import default_policy
 from php_sentinel.intelligence.version_policy import evaluate_version
 from php_sentinel.models.assessment import Assessment, AssessmentStatus
 from php_sentinel.models.evidence import Confidence, Evidence, EvidenceKind
 from php_sentinel.models.fingerprint import Fingerprint
+from php_sentinel.models.intelligence_policy import IntelligencePolicy
 from php_sentinel.models.vendor import VendorEvidence, VendorFamily
 
 
@@ -20,7 +22,9 @@ def assess_response(
     target: str,
     response: httpx.Response,
     vendor_evidence: VendorEvidence | None = None,
+    policy: IntelligencePolicy | None = None,
 ) -> Assessment:
+    selected_policy = policy or default_policy()
     detection = detect_php(response)
     body = response.text[:200_000]
 
@@ -101,12 +105,15 @@ def assess_response(
         result.remediation = list(remediation_for(result.status))
         return result
 
-    policy = evaluate_version(detection.version)
+    version_decision = evaluate_version(
+        detection.version,
+        policy=selected_policy,
+    )
 
     if (
         vendor_evidence
         and vendor_evidence.vendor.value == "upstream"
-        and policy.upstream_fixed is False
+        and version_decision.upstream_fixed is False
         and detection.version
     ):
         result.rationale.append(
@@ -115,18 +122,19 @@ def assess_response(
             "backport ambiguity."
         )
     else:
-        result.rationale.append(policy.rationale)
+        result.rationale.append(version_decision.rationale)
 
     applicability = evaluate_oct_2026_applicability(
         php_detected=detection.detected,
-        upstream_fixed=policy.upstream_fixed,
+        upstream_fixed=version_decision.upstream_fixed,
         sapi=sapi.sapi,
+        policy=selected_policy,
     )
 
     result.exposure_priority = applicability.exposure_priority
     result.rationale.extend(applicability.rationale)
 
-    if policy.upstream_fixed is True:
+    if version_decision.upstream_fixed is True:
         result.status = AssessmentStatus.PATCHED_UPSTREAM
         result.remediation = list(remediation_for(result.status))
         return result
@@ -157,7 +165,7 @@ def assess_response(
 
         return result
 
-    if policy.requires_vendor_evidence:
+    if version_decision.requires_vendor_evidence:
         result.status = AssessmentStatus.NEEDS_VENDOR_EVIDENCE
         result.remediation = list(remediation_for(result.status))
         return result

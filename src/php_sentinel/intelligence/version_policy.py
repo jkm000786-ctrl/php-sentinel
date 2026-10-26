@@ -2,7 +2,8 @@ from dataclasses import dataclass
 
 from packaging.version import InvalidVersion, Version
 
-from .cve_database import FIXED_UPSTREAM
+from php_sentinel.intelligence.repository import default_policy, fixed_version_for_branch
+from php_sentinel.models.intelligence_policy import IntelligencePolicy
 
 
 @dataclass(frozen=True)
@@ -14,7 +15,11 @@ class VersionDecision:
     rationale: str
 
 
-def evaluate_version(raw_version: str | None) -> VersionDecision:
+def evaluate_version(
+    raw_version: str | None,
+    *,
+    policy: IntelligencePolicy | None = None,
+) -> VersionDecision:
     if not raw_version:
         return VersionDecision(
             False,
@@ -40,7 +45,8 @@ def evaluate_version(raw_version: str | None) -> VersionDecision:
         return VersionDecision(False, False, None, True, "Incomplete PHP version.")
 
     branch = (release[0], release[1])
-    threshold = FIXED_UPSTREAM.get(branch)
+    selected_policy = policy or default_policy()
+    threshold = fixed_version_for_branch(branch, policy=selected_policy)
 
     if threshold is None:
         return VersionDecision(
@@ -52,8 +58,7 @@ def evaluate_version(raw_version: str | None) -> VersionDecision:
             "vendor backport evidence is required.",
         )
 
-    current = tuple((list(release[:3]) + [0, 0, 0])[:3])
-    fixed = current >= threshold
+    fixed = parsed >= threshold
 
     if fixed:
         return VersionDecision(
@@ -61,7 +66,7 @@ def evaluate_version(raw_version: str | None) -> VersionDecision:
             True,
             True,
             False,
-            f"PHP {raw_version} meets upstream fixed threshold {'.'.join(map(str, threshold))}.",
+            f"PHP {raw_version} meets upstream fixed threshold {threshold}.",
         )
 
     return VersionDecision(
@@ -70,6 +75,6 @@ def evaluate_version(raw_version: str | None) -> VersionDecision:
         False,
         True,
         f"PHP {raw_version} is below upstream fixed threshold "
-        f"{'.'.join(map(str, threshold))}; this is not proof of exploitability "
+        f"{threshold}; this is not proof of exploitability "
         "because a vendor may have backported the fix.",
     )
