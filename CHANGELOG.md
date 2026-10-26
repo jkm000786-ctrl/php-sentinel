@@ -2,6 +2,19 @@
 
 All notable PHP Sentinel changes will be documented here.
 
+
+## Unreleased
+
+### Security
+
+- Isolated bundled intelligence policy state so mutating one retrieved default policy cannot poison later security decisions.
+- Bound differential laboratory validation to the same verified intelligence selection and provenance model used by authoritative assessment paths.
+
+### Fixed
+
+- Enforced canonical consistency across assessment status, per-CVE decisions, exposure priority, findings, and remediation.
+- Cleared exposure priority for non-PHP and vendor-patched assessment states.
+
 ## 0.1.2 - 2026-10-25
 
 ### Fixed

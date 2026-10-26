@@ -29,7 +29,7 @@ must remain aligned with that value.
 
 ## Current status
 
-Current development version: `0.1.0`.
+Current development version: `0.1.2`.
 
 The strict local release gate is available through:
 
@@ -49,12 +49,8 @@ installed CLI entry points.
 
 Apache License 2.0 has now been selected for the project.
 
-Public release remains blocked by repository publication configuration:
+Public prereleases `v0.1.0`, `v0.1.1`, and `v0.1.2` have been published on
+GitHub. Repository metadata points to the canonical GitHub project, and GitHub
+Actions CI runs on pushes and pull requests targeting `main`.
 
-1. no Git remote is configured yet;
-2. the final GitHub repository URL has not yet been added to project metadata.
-
-No provider-specific CI configuration should be added until the repository host
-is intentionally chosen.
-
-This version is not yet declared a stable public release.
+The project remains pre-1.0. No stable public release has been declared.

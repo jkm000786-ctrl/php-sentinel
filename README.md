@@ -55,7 +55,7 @@ Only assess systems you own or are explicitly authorized to test.
 ## Project status
 
 PHP Sentinel is currently a pre-1.0 security engineering project. The current
-package version is `0.1.0`.
+package version is `0.1.2`.
 
 Release governance:
 
