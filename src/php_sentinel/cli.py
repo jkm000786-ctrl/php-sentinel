@@ -7,10 +7,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.pipeline import run_unified_assessment
 from php_sentinel.evidence.writer import write_json_evidence
-from php_sentinel.http.client import fetch
 from php_sentinel.intelligence.activation import (
     IntelligenceActivationError,
     activate_verified_intelligence,
@@ -20,7 +18,6 @@ from php_sentinel.intelligence.lifecycle import (
 )
 from php_sentinel.models.vendor import (
     BackportStatus,
-    VendorEvidence,
     VendorFamily,
 )
 from php_sentinel.reporting.markdown import render_markdown_report
@@ -125,6 +122,8 @@ def analyze(
         ),
     ] = None,
 ) -> None:
+    validation = None
+
     if validate_lab:
         validation = run_lab_validation(
             target,
@@ -150,42 +149,28 @@ def analyze(
             console.print(f" • {observation.method} {observation.status_code} {observation.url}")
 
     try:
-        response = fetch(target, timeout=timeout)
-    except httpx.HTTPError as exc:
-        console.print(f"[red]HTTP error:[/red] {exc}")
-        raise typer.Exit(code=2) from exc
-
-    has_vendor_evidence = any(
-        (
-            vendor != VendorFamily.UNKNOWN,
-            package_name,
-            package_version,
-            backport_status != BackportStatus.UNKNOWN,
-            advisory_reference,
-        )
-    )
-
-    vendor_evidence = None
-
-    if has_vendor_evidence:
-        vendor_evidence = VendorEvidence(
+        report = run_unified_assessment(
+            target,
+            timeout=timeout,
             vendor=vendor,
             package_name=package_name,
             package_version=package_version,
             backport_status=backport_status,
             advisory_reference=advisory_reference,
-            source="operator-supplied",
+            lab_validation=validation,
         )
+    except httpx.HTTPError as exc:
+        typer.echo(
+            f"HTTP error: {exc}",
+            err=True,
+        )
+        raise typer.Exit(code=2) from exc
 
-    result = assess_response(
-        target,
-        response,
-        vendor_evidence=vendor_evidence,
-    )
+    result = report.assessment
 
     typer.echo(
-        "NOTICE: `analyze` is a bundled-policy diagnostic path without "
-        "canonical assessment provenance. Use `php-sentinel scan` for "
+        "NOTICE: `analyze` is a bundled-policy diagnostic path that does "
+        "not emit canonical assessment provenance. Use `php-sentinel scan` for "
         "authoritative provenance-bearing assessment output.",
         err=True,
     )
@@ -204,7 +189,7 @@ def analyze(
     table.add_column("Value")
 
     table.add_row("Target", result.target)
-    table.add_row("HTTP status", str(response.status_code))
+    table.add_row("HTTP status", str(report.http.status_code))
     table.add_row("PHP detected", str(result.php_detected))
     table.add_row("PHP confidence", f"{result.php_confidence:.0%}")
     table.add_row("PHP version", result.php_version or "unknown")
@@ -444,7 +429,10 @@ def scan(
             intelligence_selection=(intelligence_selection),
         )
     except httpx.HTTPError as exc:
-        console.print(f"[red]HTTP error:[/red] {exc}")
+        typer.echo(
+            f"HTTP error: {exc}",
+            err=True,
+        )
         raise typer.Exit(code=2) from exc
 
     if evidence_out:

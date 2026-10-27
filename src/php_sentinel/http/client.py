@@ -26,6 +26,32 @@ class HTTPResponseTooLargeError(ValueError):
     """Raised when a target response exceeds the configured body limit."""
 
 
+class TransportExecutionError(httpx.RequestError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        evidence: TransportEvidence,
+    ) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
+def _transport_failure_reason(
+    exc: httpx.TransportError,
+) -> TransportStopReason:
+    if isinstance(exc, httpx.TimeoutException):
+        return TransportStopReason.TIMEOUT
+
+    if isinstance(exc, httpx.NetworkError):
+        return TransportStopReason.NETWORK_ERROR
+
+    if isinstance(exc, httpx.ProtocolError):
+        return TransportStopReason.PROTOCOL_ERROR
+
+    return TransportStopReason.TRANSPORT_ERROR
+
+
 def _load_bounded_response(
     streamed: httpx.Response,
     *,
@@ -192,15 +218,39 @@ def fetch_with_transport(
             while True:
                 requests_sent += 1
 
-                with client.stream(
-                    "GET",
-                    current_url,
-                ) as streamed:
-                    response = _load_bounded_response(
-                        streamed,
-                        maximum_bytes=maximum_bytes,
-                        history=attempt_history,
+                try:
+                    with client.stream(
+                        "GET",
+                        current_url,
+                    ) as streamed:
+                        response = _load_bounded_response(
+                            streamed,
+                            maximum_bytes=maximum_bytes,
+                            history=attempt_history,
+                        )
+                except httpx.TransportError as exc:
+                    evidence = _build_transport_evidence(
+                        policy=selected_policy,
+                        attempts=attempts,
+                        requests_sent=requests_sent,
+                        retries=retries,
+                        redirect_count=redirect_count,
+                        stop_reason=_transport_failure_reason(exc),
+                        retry_after_observed=retry_after_observed,
+                        retry_after_honored=retry_after_honored,
+                        retry_after_exceeded_policy=(
+                            retry_after_exceeded_policy
+                        ),
+                        rate_limit_observed=rate_limit_observed,
                     )
+
+                    raise TransportExecutionError(
+                        (
+                            "Transport execution failed before a permitted "
+                            "application response was obtained."
+                        ),
+                        evidence=evidence,
+                    ) from exc
 
                 if not response.is_redirect:
                     break

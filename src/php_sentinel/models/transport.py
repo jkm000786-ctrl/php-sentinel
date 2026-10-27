@@ -13,12 +13,16 @@ class TransportStopReason(str, Enum):
     RETRY_AFTER_EXCEEDS_POLICY = "retry_after_exceeds_policy"
     REDIRECT_LIMIT_EXHAUSTED = "redirect_limit_exhausted"
     REDIRECT_TARGET_DENIED = "redirect_target_denied"
+    TIMEOUT = "timeout"
+    NETWORK_ERROR = "network_error"
+    PROTOCOL_ERROR = "protocol_error"
+    TRANSPORT_ERROR = "transport_error"
 
 
 class TransportPolicy(BaseModel):
     max_attempts: int = Field(default=2, ge=1, le=5)
     request_budget: int = Field(default=2, ge=1, le=5)
-    maximum_redirects: int = Field(default=5, ge=0, le=10)
+    maximum_redirects: int = Field(default=1, ge=0, le=10)
     allow_cross_host_redirects: bool = False
     retry_statuses: tuple[int, ...] = (429, 503)
     retry_after_enabled: bool = True

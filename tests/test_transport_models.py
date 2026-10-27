@@ -16,7 +16,7 @@ def test_default_transport_policy_is_bounded_and_conservative():
 
     assert policy.max_attempts == 2
     assert policy.request_budget == 2
-    assert policy.maximum_redirects == 5
+    assert policy.maximum_redirects == 1
     assert policy.allow_cross_host_redirects is False
     assert policy.retry_statuses == (429, 503)
     assert policy.retry_after_enabled is True
@@ -34,6 +34,59 @@ def test_transport_policy_rejects_attempts_above_budget():
             max_attempts=3,
             request_budget=2,
         )
+
+
+def test_transport_policy_accepts_phase60_historical_redirect_limit():
+    policy = TransportPolicy.model_validate(
+        {
+            "max_attempts": 2,
+            "request_budget": 2,
+            "maximum_redirects": 5,
+            "allow_cross_host_redirects": False,
+            "retry_statuses": [429, 503],
+            "retry_after_enabled": True,
+            "maximum_retry_after_seconds": 30.0,
+            "base_backoff_seconds": 1.0,
+            "maximum_backoff_seconds": 8.0,
+        }
+    )
+
+    assert policy.request_budget == 2
+    assert policy.maximum_redirects == 5
+
+
+def test_transport_evidence_accepts_phase60_historical_policy():
+    evidence = TransportEvidence.model_validate(
+        {
+            "policy": {
+                "max_attempts": 2,
+                "request_budget": 2,
+                "maximum_redirects": 5,
+                "allow_cross_host_redirects": False,
+                "retry_statuses": [429, 503],
+                "retry_after_enabled": True,
+                "maximum_retry_after_seconds": 30.0,
+                "base_backoff_seconds": 1.0,
+                "maximum_backoff_seconds": 8.0,
+            },
+            "execution": {
+                "attempts": 1,
+                "requests_sent": 1,
+                "retries": 0,
+                "budget_exhausted": False,
+                "retry_after_observed": False,
+                "retry_after_honored": False,
+                "retry_after_exceeded_policy": False,
+                "rate_limit_observed": False,
+                "redirect_target_denied": False,
+                "stop_reason": "completed",
+                "redirect_count": 0,
+            },
+        }
+    )
+
+    assert evidence.policy.maximum_redirects == 5
+    assert evidence.execution.stop_reason == TransportStopReason.COMPLETED
 
 
 def test_transport_policy_rejects_inverted_backoff_bounds():

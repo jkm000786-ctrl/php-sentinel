@@ -5,7 +5,10 @@ from typing import ClassVar
 import httpx
 
 import php_sentinel.http.client as client_module
-from php_sentinel.http.client import fetch_with_transport
+from php_sentinel.http.client import (
+    TransportExecutionError,
+    fetch_with_transport,
+)
 from php_sentinel.models.transport import (
     TransportPolicy,
     TransportStopReason,
@@ -76,6 +79,118 @@ def configure(
     )
 
 
+class FailingClient:
+    error: ClassVar[httpx.TransportError | None] = None
+    seen_urls: ClassVar[list[str]] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def stream(self, method, url):
+        assert method == "GET"
+
+        type(self).seen_urls.append(str(url))
+
+        assert type(self).error is not None
+        raise type(self).error
+
+
+def configure_failure(
+    monkeypatch,
+    error: httpx.TransportError,
+):
+    FailingClient.error = error
+    FailingClient.seen_urls = []
+
+    monkeypatch.setattr(
+        client_module.httpx,
+        "Client",
+        FailingClient,
+    )
+
+
+def test_timeout_failure_carries_transport_evidence(monkeypatch):
+    configure_failure(
+        monkeypatch,
+        httpx.ConnectTimeout("connect timeout"),
+    )
+
+    try:
+        fetch_with_transport("https://example.test/")
+    except TransportExecutionError as exc:
+        assert isinstance(exc, httpx.RequestError)
+        assert isinstance(exc.__cause__, httpx.ConnectTimeout)
+        assert exc.evidence.execution.attempts == 1
+        assert exc.evidence.execution.requests_sent == 1
+        assert exc.evidence.execution.retries == 0
+        assert (
+            exc.evidence.execution.stop_reason
+            == TransportStopReason.TIMEOUT
+        )
+    else:
+        raise AssertionError("Expected TransportExecutionError.")
+
+
+def test_network_failure_carries_transport_evidence(monkeypatch):
+    configure_failure(
+        monkeypatch,
+        httpx.ConnectError("connection failed"),
+    )
+
+    try:
+        fetch_with_transport("https://example.test/")
+    except TransportExecutionError as exc:
+        assert isinstance(exc.__cause__, httpx.ConnectError)
+        assert (
+            exc.evidence.execution.stop_reason
+            == TransportStopReason.NETWORK_ERROR
+        )
+    else:
+        raise AssertionError("Expected TransportExecutionError.")
+
+
+def test_protocol_failure_carries_transport_evidence(monkeypatch):
+    configure_failure(
+        monkeypatch,
+        httpx.RemoteProtocolError("invalid protocol response"),
+    )
+
+    try:
+        fetch_with_transport("https://example.test/")
+    except TransportExecutionError as exc:
+        assert isinstance(exc.__cause__, httpx.RemoteProtocolError)
+        assert (
+            exc.evidence.execution.stop_reason
+            == TransportStopReason.PROTOCOL_ERROR
+        )
+    else:
+        raise AssertionError("Expected TransportExecutionError.")
+
+
+def test_other_transport_failure_uses_generic_stop_reason(monkeypatch):
+    configure_failure(
+        monkeypatch,
+        httpx.ProxyError("proxy transport failure"),
+    )
+
+    try:
+        fetch_with_transport("https://example.test/")
+    except TransportExecutionError as exc:
+        assert isinstance(exc.__cause__, httpx.ProxyError)
+        assert (
+            exc.evidence.execution.stop_reason
+            == TransportStopReason.TRANSPORT_ERROR
+        )
+    else:
+        raise AssertionError("Expected TransportExecutionError.")
+
+
 def test_executor_completes_single_request(monkeypatch):
     configure(
         monkeypatch,
@@ -124,6 +239,48 @@ def test_same_host_redirect_consumes_request_budget(monkeypatch):
     assert evidence.execution.attempts == 1
     assert evidence.execution.requests_sent == 2
     assert evidence.execution.redirect_count == 1
+
+
+def test_request_budget_limits_historical_high_redirect_policy(
+    monkeypatch,
+):
+    configure(
+        monkeypatch,
+        [
+            (
+                302,
+                {"Location": "/one"},
+                b"redirect-one",
+            ),
+            (
+                302,
+                {"Location": "/two"},
+                b"redirect-two",
+            ),
+        ],
+    )
+
+    response, evidence = fetch_with_transport(
+        "https://example.test/start",
+        policy=TransportPolicy(
+            max_attempts=1,
+            request_budget=2,
+            maximum_redirects=5,
+        ),
+    )
+
+    assert response.status_code == 302
+    assert SequenceClient.seen_urls == [
+        "https://example.test/start",
+        "https://example.test/one",
+    ]
+    assert evidence.execution.requests_sent == 2
+    assert evidence.execution.redirect_count == 1
+    assert evidence.execution.budget_exhausted is True
+    assert (
+        evidence.execution.stop_reason
+        == TransportStopReason.REQUEST_BUDGET_EXHAUSTED
+    )
 
 
 def test_cross_host_redirect_is_denied_by_default(monkeypatch):
