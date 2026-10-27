@@ -7,7 +7,7 @@ from php_sentinel.models.vendor import VendorFamily
 from php_sentinel.reporting.markdown import render_markdown_report
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_markdown_contains_findings_and_boundary(mock_fetch):
     request = httpx.Request(
         "GET",
@@ -46,3 +46,34 @@ def test_markdown_contains_findings_and_boundary(mock_fetch):
     assert "Edge response class" in markdown
     assert "Application reachability" in markdown
     assert "Provenance edge provider" in markdown
+
+
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
+def test_markdown_reports_safe_transport_execution(mock_fetch):
+    from php_sentinel.assessment.pipeline import run_unified_assessment
+    from php_sentinel.reporting.markdown import render_markdown_report
+
+    mock_fetch.return_value = httpx.Response(
+        200,
+        request=httpx.Request(
+            "GET",
+            "https://example.test/",
+        ),
+        headers={
+            "Server": "Apache",
+            "X-Powered-By": "PHP/8.5.12",
+        },
+        text="application",
+    )
+
+    report = run_unified_assessment(
+        "https://example.test/",
+    )
+
+    markdown = render_markdown_report(report)
+
+    assert "## Transport Execution" in markdown
+    assert "- **Attempts:** 1" in markdown
+    assert "- **Requests sent:** 1" in markdown
+    assert "- **Retries:** 0" in markdown
+    assert "- **Stop reason:** `completed`" in markdown

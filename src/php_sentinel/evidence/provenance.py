@@ -34,6 +34,7 @@ from php_sentinel.models.intelligence_trust import (
 from php_sentinel.models.provenance import (
     EvidenceProvenance,
 )
+from php_sentinel.models.transport import TransportEvidence
 
 POLICY_VERSION = "2026-10-23.1"
 
@@ -94,6 +95,7 @@ def build_provenance(
     canonical_payload: dict,
     target_identity_payload: dict,
     edge_assessment: EdgeAssessment | None = None,
+    transport_evidence: TransportEvidence | None = None,
     intelligence_selection: VerifiedIntelligenceSelection | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
     intelligence_trust: IntelligenceTrustDecision | None = None,
@@ -163,6 +165,51 @@ def build_provenance(
         ),
         edge_rate_limited=(
             edge_assessment.rate_limited if edge_assessment else None
+        ),
+        transport_attempts=(
+            transport_evidence.execution.attempts
+            if transport_evidence
+            else None
+        ),
+        transport_requests_sent=(
+            transport_evidence.execution.requests_sent
+            if transport_evidence
+            else None
+        ),
+        transport_retries=(
+            transport_evidence.execution.retries
+            if transport_evidence
+            else None
+        ),
+        transport_budget_exhausted=(
+            transport_evidence.execution.budget_exhausted
+            if transport_evidence
+            else None
+        ),
+        transport_retry_after_observed=(
+            transport_evidence.execution.retry_after_observed
+            if transport_evidence
+            else None
+        ),
+        transport_retry_after_honored=(
+            transport_evidence.execution.retry_after_honored
+            if transport_evidence
+            else None
+        ),
+        transport_rate_limit_observed=(
+            transport_evidence.execution.rate_limit_observed
+            if transport_evidence
+            else None
+        ),
+        transport_redirect_target_denied=(
+            transport_evidence.execution.redirect_target_denied
+            if transport_evidence
+            else None
+        ),
+        transport_stop_reason=(
+            transport_evidence.execution.stop_reason.value
+            if transport_evidence
+            else None
         ),
         intelligence_policy_id=str(identity["policy_id"]),
         intelligence_schema_version=int(identity["schema_version"]),

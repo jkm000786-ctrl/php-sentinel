@@ -27,7 +27,7 @@ def response(
     )
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_unified_candidate_pipeline(mock_fetch):
     mock_fetch.return_value = response(
         "8.5.11",
@@ -50,7 +50,7 @@ def test_unified_candidate_pipeline(mock_fetch):
     assert len(report.http.body_sha256) == 64
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_unified_patched_pipeline(mock_fetch):
     mock_fetch.return_value = response(
         "8.5.12",
@@ -69,7 +69,7 @@ def test_unified_patched_pipeline(mock_fetch):
     assert statuses == {"patched_upstream"}
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_unified_report_does_not_store_body(mock_fetch):
     secret_marker = "do-not-store-this-body"
 
@@ -89,7 +89,7 @@ def test_unified_report_does_not_store_body(mock_fetch):
     assert report.http.body_length == len(secret_marker.encode())
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_upstream_candidate_has_no_backport_contradiction(mock_fetch):
     mock_fetch.return_value = response(
         "8.5.11",
@@ -107,7 +107,7 @@ def test_upstream_candidate_has_no_backport_contradiction(mock_fetch):
     assert "vendor may have backported" not in rationale
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_unified_report_contains_provenance(mock_fetch):
     mock_fetch.return_value = response(
         "8.5.11",
@@ -125,7 +125,7 @@ def test_unified_report_contains_provenance(mock_fetch):
     assert len(report.provenance.target_identity_sha256) == 64
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_unified_report_binds_intelligence_policy(
     mock_fetch,
 ):
@@ -160,7 +160,7 @@ def test_unified_report_binds_intelligence_policy(
     assert report.provenance.intelligence_sha256 == policy_sha256(policy)
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_unified_pipeline_uses_one_policy_across_decision_layers(mock_fetch):
     from php_sentinel.intelligence.repository import default_policy
 
@@ -185,7 +185,7 @@ def test_unified_pipeline_uses_one_policy_across_decision_layers(mock_fetch):
     }
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_edge_challenge_suppresses_application_assessment(mock_fetch):
     mock_fetch.return_value = httpx.Response(
         403,
@@ -224,7 +224,7 @@ def test_edge_challenge_suppresses_application_assessment(mock_fetch):
     assert report.provenance.application_reachability == "not_reached"
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_edge_only_response_cannot_create_php_exposure(mock_fetch):
     mock_fetch.return_value = httpx.Response(
         403,
@@ -251,7 +251,7 @@ def test_edge_only_response_cannot_create_php_exposure(mock_fetch):
     )
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_edge_with_independent_php_evidence_keeps_normal_pipeline(mock_fetch):
     mock_fetch.return_value = httpx.Response(
         200,
@@ -277,3 +277,169 @@ def test_edge_with_independent_php_evidence_keeps_normal_pipeline(mock_fetch):
         item.state.value
         for item in report.findings
     } == {"potential_exposure"}
+
+
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
+def test_unified_report_contains_transport_evidence(mock_fetch):
+    mock_fetch.return_value = response(
+        "8.5.12",
+        "transport-evidence",
+    )
+
+    report = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    assert report.transport is not None
+    assert report.transport.execution.attempts == 1
+    assert report.transport.execution.requests_sent == 1
+    assert report.transport.execution.retries == 0
+    assert report.provenance.transport_attempts == 1
+    assert report.provenance.transport_requests_sent == 1
+    assert report.provenance.transport_retries == 0
+    assert report.provenance.transport_stop_reason == "completed"
+
+
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
+def test_transport_execution_changes_canonical_not_target_identity(
+    mock_fetch,
+):
+    from php_sentinel.models.transport import (
+        TransportEvidence,
+        TransportExecution,
+    )
+
+    first = response("8.5.12", "stable-identity")
+    second = response("8.5.12", "stable-identity")
+
+    first_transport = TransportEvidence(
+        execution=TransportExecution(
+            attempts=1,
+            requests_sent=1,
+        )
+    )
+
+    second_transport = TransportEvidence(
+        execution=TransportExecution(
+            attempts=2,
+            requests_sent=2,
+            retries=1,
+        )
+    )
+
+    mock_fetch.side_effect = [
+        (first, first_transport),
+        (second, second_transport),
+    ]
+
+    before = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    after = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    assert (
+        before.provenance.canonical_sha256
+        != after.provenance.canonical_sha256
+    )
+
+    assert (
+        before.provenance.target_identity_sha256
+        == after.provenance.target_identity_sha256
+    )
+
+
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
+def test_legacy_unified_report_without_transport_still_loads(
+    mock_fetch,
+):
+    from php_sentinel.models.unified import UnifiedAssessmentReport
+
+    mock_fetch.return_value = response(
+        "8.5.12",
+        "legacy-compatible",
+    )
+
+    report = run_unified_assessment(
+        "http://127.0.0.1/",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    payload = report.model_dump(mode="json")
+    payload.pop("transport")
+
+    legacy = UnifiedAssessmentReport.model_validate(payload)
+
+    assert legacy.transport is None
+    assert (
+        legacy.provenance.target_identity_sha256
+        == report.provenance.target_identity_sha256
+    )
+
+
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
+def test_transport_stop_suppresses_application_assessment(mock_fetch):
+    from php_sentinel.models.transport import (
+        TransportEvidence,
+        TransportExecution,
+        TransportStopReason,
+    )
+
+    blocked_response = httpx.Response(
+        302,
+        request=httpx.Request(
+            "GET",
+            "https://example.test/start",
+        ),
+        headers={
+            "Location": "https://outside.test/",
+            "Server": "Apache/2.4",
+            "X-Powered-By": "PHP/8.5.11",
+        },
+        text="redirect",
+    )
+
+    transport = TransportEvidence(
+        execution=TransportExecution(
+            attempts=1,
+            requests_sent=1,
+            redirect_target_denied=True,
+            stop_reason=TransportStopReason.REDIRECT_TARGET_DENIED,
+        )
+    )
+
+    mock_fetch.return_value = (
+        blocked_response,
+        transport,
+    )
+
+    report = run_unified_assessment(
+        "https://example.test/start",
+        vendor=VendorFamily.UPSTREAM,
+    )
+
+    assert (
+        report.transport.execution.stop_reason.value
+        == "redirect_target_denied"
+    )
+    assert report.assessment.status.value == "inconclusive"
+    assert report.assessment.php_detected is False
+    assert report.assessment.php_version is None
+    assert report.assessment.php_confidence == 0.0
+    assert report.assessment.exposure_priority == "unknown"
+    assert report.assessment.applicable_cves == []
+
+    assert {
+        item.status.value
+        for item in report.cve_decisions.decisions
+    } == {"inconclusive"}
+
+    assert {
+        item.state.value
+        for item in report.findings
+    } == {"inconclusive"}

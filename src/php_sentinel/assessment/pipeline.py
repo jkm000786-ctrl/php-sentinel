@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 
+import httpx
+
 from php_sentinel.assessment.consistency import validate_cross_layer_consistency
 from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.finding_engine import build_findings
 from php_sentinel.detection.edge_detector import classify_edge_response
 from php_sentinel.evidence.provenance import build_provenance
-from php_sentinel.http.client import fetch
+from php_sentinel.http.client import fetch_with_transport
 from php_sentinel.intelligence.activation import (
     VerifiedIntelligenceSelection,
 )
@@ -30,6 +32,11 @@ from php_sentinel.models.edge import (
 from php_sentinel.models.intelligence_lifecycle import IntelligenceLifecycleDecision
 from php_sentinel.models.intelligence_policy import IntelligencePolicy
 from php_sentinel.models.intelligence_trust import IntelligenceTrustDecision
+from php_sentinel.models.transport import (
+    TransportEvidence,
+    TransportExecution,
+    TransportStopReason,
+)
 from php_sentinel.models.unified import (
     HTTPMetadata,
     UnifiedAssessmentReport,
@@ -120,6 +127,69 @@ def _build_edge_inconclusive_assessment(
     )
 
 
+def _normalize_transport_result(
+    result: tuple[httpx.Response, TransportEvidence] | httpx.Response,
+) -> tuple[httpx.Response, TransportEvidence]:
+    if isinstance(result, tuple):
+        return result
+
+    response = result
+
+    return (
+        response,
+        TransportEvidence(
+            execution=TransportExecution(
+                attempts=1,
+                requests_sent=1,
+                redirect_count=len(response.history),
+            )
+        ),
+    )
+
+
+def _transport_blocks_application_assessment(
+    transport_evidence: TransportEvidence,
+) -> bool:
+    return (
+        transport_evidence.execution.stop_reason
+        != TransportStopReason.COMPLETED
+    )
+
+
+def _build_transport_inconclusive_assessment(
+    *,
+    target: str,
+    response: httpx.Response,
+    transport_evidence: TransportEvidence,
+) -> Assessment:
+    stop_reason = transport_evidence.execution.stop_reason.value
+
+    reason = (
+        "Application-layer assessment suppressed because transport "
+        f"execution stopped with {stop_reason}."
+    )
+
+    return Assessment(
+        target=target,
+        php_detected=False,
+        php_version=None,
+        php_confidence=0.0,
+        server=response.headers.get("server"),
+        x_powered_by=None,
+        exposure_priority=ExposurePriority.UNKNOWN.value,
+        status=AssessmentStatus.INCONCLUSIVE,
+        applicable_cves=[],
+        rationale=[reason],
+        remediation=[
+            (
+                "Resolve the transport-policy stop condition and obtain "
+                "a completed permitted application response before "
+                "drawing PHP runtime or CVE applicability conclusions."
+            )
+        ],
+    )
+
+
 def run_unified_assessment(
     target: str,
     *,
@@ -173,19 +243,65 @@ def run_unified_assessment(
         advisory_reference=advisory_reference,
     )
 
-    response = fetch(
-        target,
-        timeout=timeout,
+    response, transport_evidence = _normalize_transport_result(
+        fetch_with_transport(
+            target,
+            timeout=timeout,
+        )
     )
 
     edge_assessment = classify_edge_response(response)
 
-    if _edge_blocks_application_assessment(edge_assessment):
-        assessment = _build_edge_inconclusive_assessment(
-            target=target,
-            response=response,
-            edge_assessment=edge_assessment,
+    transport_application_suppressed = (
+        _transport_blocks_application_assessment(
+            transport_evidence
         )
+    )
+    edge_application_suppressed = (
+        _edge_blocks_application_assessment(
+            edge_assessment
+        )
+    )
+
+    if (
+        transport_application_suppressed
+        or edge_application_suppressed
+    ):
+        if transport_application_suppressed:
+            assessment = _build_transport_inconclusive_assessment(
+                target=target,
+                response=response,
+                transport_evidence=transport_evidence,
+            )
+
+            gate_reason = (
+                "CVE applicability is inconclusive because transport "
+                "execution did not complete successfully. Stop reason: "
+                f"{transport_evidence.execution.stop_reason.value}."
+            )
+
+            gate_remediation = (
+                "Resolve the transport-policy stop condition and obtain "
+                "a completed permitted application response before "
+                "evaluating this CVE."
+            )
+
+        else:
+            assessment = _build_edge_inconclusive_assessment(
+                target=target,
+                response=response,
+                edge_assessment=edge_assessment,
+            )
+
+            gate_reason = (
+                "CVE applicability is inconclusive because PHP Sentinel "
+                "did not establish application-layer reachability."
+            )
+
+            gate_remediation = (
+                "Obtain a permitted application-layer response "
+                "before evaluating this CVE."
+            )
 
         seed_report = decide_cves(
             php_detected=True,
@@ -196,11 +312,6 @@ def run_unified_assessment(
             policy=selected_policy,
         )
 
-        edge_reason = (
-            "CVE applicability is inconclusive because PHP Sentinel did "
-            "not establish application-layer reachability."
-        )
-
         decisions = [
             decision.model_copy(
                 update={
@@ -209,14 +320,11 @@ def run_unified_assessment(
                     "exposure_priority": ExposurePriority.UNKNOWN,
                     "detected_version": None,
                     "rationale": [
-                        edge_reason,
+                        gate_reason,
                         *decision.rationale,
                     ],
                     "remediation": [
-                        (
-                            "Obtain a permitted application-layer response "
-                            "before evaluating this CVE."
-                        )
+                        gate_remediation,
                     ],
                 }
             )
@@ -233,7 +341,7 @@ def run_unified_assessment(
                 "decisions": decisions,
                 "notes": [
                     *seed_report.notes,
-                    edge_reason,
+                    gate_reason,
                 ],
             }
         )
@@ -291,6 +399,7 @@ def run_unified_assessment(
         cve_report=cve_report,
         findings=findings,
         edge_assessment=edge_assessment,
+        transport_evidence=transport_evidence,
     )
 
     intelligence_identity = policy_identity(selected_policy)
@@ -299,6 +408,7 @@ def run_unified_assessment(
         "target": target,
         "intelligence_policy": intelligence_identity,
         "http": metadata.model_dump(mode="json"),
+        "transport": transport_evidence.model_dump(mode="json"),
         "edge": edge_assessment.model_dump(mode="json"),
         "assessment": assessment.model_dump(mode="json"),
         "cve_decisions": cve_report.model_dump(mode="json"),
@@ -322,6 +432,7 @@ def run_unified_assessment(
         canonical_payload=canonical_payload,
         target_identity_payload=(target_identity_payload),
         edge_assessment=edge_assessment,
+        transport_evidence=transport_evidence,
         intelligence_selection=(provenance_selection),
         intelligence_policy=(selected_policy if provenance_selection is None else None),
     )
@@ -329,6 +440,7 @@ def run_unified_assessment(
     return UnifiedAssessmentReport(
         target=target,
         http=metadata,
+        transport=transport_evidence,
         edge=edge_assessment,
         assessment=assessment,
         cve_decisions=cve_report,

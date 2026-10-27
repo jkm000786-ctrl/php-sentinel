@@ -51,6 +51,49 @@ def render_markdown_report(
         f"- **Challenge detected:** {report.edge.challenge_detected}",
         f"- **Rate limited:** {report.edge.rate_limited}",
         "",
+        "## Transport Execution",
+        "",
+        (
+            "- **Attempts:** "
+            f"{report.transport.execution.attempts if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Requests sent:** "
+            f"{report.transport.execution.requests_sent if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Retries:** "
+            f"{report.transport.execution.retries if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Redirect count:** "
+            f"{report.transport.execution.redirect_count if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Budget exhausted:** "
+            f"{report.transport.execution.budget_exhausted if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Rate limit observed:** "
+            f"{report.transport.execution.rate_limit_observed if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Retry-After observed:** "
+            f"{report.transport.execution.retry_after_observed if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Retry-After honored:** "
+            f"{report.transport.execution.retry_after_honored if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Redirect target denied:** "
+            f"{report.transport.execution.redirect_target_denied if report.transport else 'n/a'}"
+        ),
+        (
+            "- **Stop reason:** "
+            f"`{report.transport.execution.stop_reason.value if report.transport else 'n/a'}`"
+        ),
+        "",
         "## Evidence Provenance",
         "",
         (f"- **Report ID:** `{report.provenance.report_id}`"),

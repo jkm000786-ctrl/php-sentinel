@@ -13,6 +13,10 @@ from php_sentinel.models.edge import (
     EdgeResponseClass,
 )
 from php_sentinel.models.finding import Finding, FindingSeverity, FindingState
+from php_sentinel.models.transport import (
+    TransportEvidence,
+    TransportStopReason,
+)
 
 
 class CrossLayerConsistencyError(ValueError):
@@ -79,8 +83,60 @@ def validate_cross_layer_consistency(
     cve_report: CVEDecisionReport,
     findings: list[Finding],
     edge_assessment: EdgeAssessment | None = None,
+    transport_evidence: TransportEvidence | None = None,
 ) -> None:
     """Fail closed when independently derived report layers contradict each other."""
+
+    transport_application_suppressed = False
+
+    if transport_evidence is not None:
+        transport_application_suppressed = (
+            transport_evidence.execution.stop_reason
+            != TransportStopReason.COMPLETED
+        )
+
+        if transport_application_suppressed:
+            if assessment.status != AssessmentStatus.INCONCLUSIVE:
+                _fail(
+                    "Transport-gated application evidence must produce "
+                    "an inconclusive top-level assessment."
+                )
+
+            if assessment.php_detected:
+                _fail(
+                    "Transport-gated application evidence must not "
+                    "claim PHP detection."
+                )
+
+            if assessment.php_version is not None:
+                _fail(
+                    "Transport-gated application evidence must not "
+                    "claim a PHP version."
+                )
+
+            if assessment.exposure_priority != ExposurePriority.UNKNOWN.value:
+                _fail(
+                    "Transport-gated application evidence must have "
+                    "unknown exposure priority."
+                )
+
+            if any(
+                item.status != CVEDecisionStatus.INCONCLUSIVE
+                for item in cve_report.decisions
+            ):
+                _fail(
+                    "Transport-gated application evidence must produce "
+                    "only inconclusive CVE decisions."
+                )
+
+            if any(
+                item.state != FindingState.INCONCLUSIVE
+                for item in findings
+            ):
+                _fail(
+                    "Transport-gated application evidence must produce "
+                    "only inconclusive findings."
+                )
 
     edge_application_suppressed = False
 
@@ -197,7 +253,7 @@ def validate_cross_layer_consistency(
         AssessmentStatus.NOT_PHP,
         AssessmentStatus.PATCHED_UPSTREAM,
         AssessmentStatus.PATCHED_VENDOR,
-    } or edge_application_suppressed:
+    } or edge_application_suppressed or transport_application_suppressed:
         expected_applicable_cves: set[str] = set()
     else:
         expected_applicable_cves = decision_id_set

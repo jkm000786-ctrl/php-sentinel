@@ -23,7 +23,7 @@ def response(version: str) -> httpx.Response:
     )
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_candidate_generates_two_critical_potential_findings(
     mock_fetch,
 ):
@@ -42,7 +42,7 @@ def test_candidate_generates_two_critical_potential_findings(
         assert finding.confidence == "high"
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_patched_runtime_generates_informational_findings(
     mock_fetch,
 ):

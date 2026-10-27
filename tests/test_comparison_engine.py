@@ -28,7 +28,7 @@ def response(version: str) -> httpx.Response:
     )
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_candidate_to_patched_is_remediated(
     mock_fetch,
 ):
@@ -57,7 +57,7 @@ def test_candidate_to_patched_is_remediated(
     assert all(change.transition.value == "remediated" for change in result.cve_changes)
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_patched_to_candidate_is_regressed(
     mock_fetch,
 ):
@@ -84,7 +84,7 @@ def test_patched_to_candidate_is_regressed(
     assert result.overall_state.value == "regressed"
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_same_evidence_is_unchanged(
     mock_fetch,
 ):
@@ -113,7 +113,7 @@ def test_same_evidence_is_unchanged(
     assert result.same_canonical_evidence is True
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_different_targets_are_incomparable_by_default(
     mock_fetch,
 ):
@@ -143,7 +143,7 @@ def test_different_targets_are_incomparable_by_default(
     assert all(change.transition.value == "remediated" for change in result.cve_changes)
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_cross_target_override_allows_lab_comparison(
     mock_fetch,
 ):
@@ -172,7 +172,7 @@ def test_cross_target_override_allows_lab_comparison(
     assert result.overall_state.value == "remediated"
 
 
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_policy_change_is_explicitly_reported(
     mock_fetch,
 ):

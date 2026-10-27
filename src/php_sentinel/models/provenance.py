@@ -22,6 +22,16 @@ class EvidenceProvenance(BaseModel):
     edge_challenge_detected: bool | None = None
     edge_rate_limited: bool | None = None
 
+    transport_attempts: int | None = None
+    transport_requests_sent: int | None = None
+    transport_retries: int | None = None
+    transport_budget_exhausted: bool | None = None
+    transport_retry_after_observed: bool | None = None
+    transport_retry_after_honored: bool | None = None
+    transport_rate_limit_observed: bool | None = None
+    transport_redirect_target_denied: bool | None = None
+    transport_stop_reason: str | None = None
+
     intelligence_policy_id: str | None = None
     intelligence_schema_version: int | None = None
     intelligence_published_date: str | None = None

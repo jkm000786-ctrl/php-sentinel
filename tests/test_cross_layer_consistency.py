@@ -108,7 +108,7 @@ def test_consistency_validator_rejects_finding_state_contradiction():
 
 @patch("php_sentinel.assessment.pipeline.build_provenance")
 @patch("php_sentinel.assessment.pipeline.build_findings", return_value=[])
-@patch("php_sentinel.assessment.pipeline.fetch")
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
 def test_pipeline_rejects_contradiction_before_provenance(
     mock_fetch,
     _mock_findings,
@@ -269,4 +269,34 @@ def test_consistency_rejects_potential_exposure_when_edge_not_reached():
             cve_report=cve_report,
             findings=findings,
             edge_assessment=edge,
+        )
+
+
+def test_consistency_rejects_exposure_when_transport_did_not_complete():
+    from php_sentinel.models.transport import (
+        TransportEvidence,
+        TransportExecution,
+        TransportStopReason,
+    )
+
+    assessment, cve_report, findings = _components()
+
+    transport = TransportEvidence(
+        execution=TransportExecution(
+            attempts=1,
+            requests_sent=1,
+            redirect_target_denied=True,
+            stop_reason=TransportStopReason.REDIRECT_TARGET_DENIED,
+        )
+    )
+
+    with pytest.raises(
+        CrossLayerConsistencyError,
+        match="Transport-gated application evidence",
+    ):
+        validate_cross_layer_consistency(
+            assessment=assessment,
+            cve_report=cve_report,
+            findings=findings,
+            transport_evidence=transport,
         )
