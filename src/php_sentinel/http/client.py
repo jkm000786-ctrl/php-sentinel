@@ -25,6 +25,15 @@ DEFAULT_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
 class HTTPResponseTooLargeError(ValueError):
     """Raised when a target response exceeds the configured body limit."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        evidence: TransportEvidence | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
 
 class TransportExecutionError(httpx.RequestError):
     def __init__(
@@ -228,6 +237,29 @@ def fetch_with_transport(
                             maximum_bytes=maximum_bytes,
                             history=attempt_history,
                         )
+                except HTTPResponseTooLargeError as exc:
+                    evidence = _build_transport_evidence(
+                        policy=selected_policy,
+                        attempts=attempts,
+                        requests_sent=requests_sent,
+                        retries=retries,
+                        redirect_count=redirect_count,
+                        stop_reason=(
+                            TransportStopReason.RESPONSE_BODY_LIMIT_EXCEEDED
+                        ),
+                        retry_after_observed=retry_after_observed,
+                        retry_after_honored=retry_after_honored,
+                        retry_after_exceeded_policy=(
+                            retry_after_exceeded_policy
+                        ),
+                        rate_limit_observed=rate_limit_observed,
+                    )
+
+                    raise HTTPResponseTooLargeError(
+                        str(exc),
+                        evidence=evidence,
+                    ) from exc
+
                 except httpx.TransportError as exc:
                     evidence = _build_transport_evidence(
                         policy=selected_policy,

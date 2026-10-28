@@ -13,6 +13,7 @@ class TransportStopReason(str, Enum):
     RETRY_AFTER_EXCEEDS_POLICY = "retry_after_exceeds_policy"
     REDIRECT_LIMIT_EXHAUSTED = "redirect_limit_exhausted"
     REDIRECT_TARGET_DENIED = "redirect_target_denied"
+    RESPONSE_BODY_LIMIT_EXCEEDED = "response_body_limit_exceeded"
     TIMEOUT = "timeout"
     NETWORK_ERROR = "network_error"
     PROTOCOL_ERROR = "protocol_error"

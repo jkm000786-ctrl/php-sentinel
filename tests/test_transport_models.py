@@ -171,6 +171,28 @@ def test_transport_execution_rejects_redirects_above_requests_sent():
         )
 
 
+def test_response_body_limit_has_explicit_stop_reason():
+    execution = TransportExecution(
+        attempts=1,
+        requests_sent=1,
+        stop_reason=(
+            TransportStopReason.RESPONSE_BODY_LIMIT_EXCEEDED
+        ),
+    )
+
+    assert (
+        execution.stop_reason
+        == TransportStopReason.RESPONSE_BODY_LIMIT_EXCEEDED
+    )
+
+    payload = execution.model_dump(mode="json")
+
+    assert (
+        payload["stop_reason"]
+        == "response_body_limit_exceeded"
+    )
+
+
 def test_redirect_denial_has_explicit_stop_reason():
     execution = TransportExecution(
         attempts=1,

@@ -6,6 +6,7 @@ import httpx
 
 import php_sentinel.http.client as client_module
 from php_sentinel.http.client import (
+    HTTPResponseTooLargeError,
     TransportExecutionError,
     fetch_with_transport,
 )
@@ -189,6 +190,77 @@ def test_other_transport_failure_uses_generic_stop_reason(monkeypatch):
         )
     else:
         raise AssertionError("Expected TransportExecutionError.")
+
+
+def test_declared_body_limit_failure_carries_transport_evidence(
+    monkeypatch,
+):
+    configure(
+        monkeypatch,
+        [
+            (
+                200,
+                {"Content-Length": "2048"},
+                b"x",
+            ),
+        ],
+    )
+
+    try:
+        fetch_with_transport(
+            "https://example.test/",
+            maximum_bytes=1024,
+        )
+    except HTTPResponseTooLargeError as exc:
+        assert isinstance(exc, ValueError)
+        assert isinstance(exc.__cause__, HTTPResponseTooLargeError)
+        assert exc.evidence is not None
+        assert exc.evidence.execution.attempts == 1
+        assert exc.evidence.execution.requests_sent == 1
+        assert exc.evidence.execution.retries == 0
+        assert exc.evidence.execution.redirect_count == 0
+        assert (
+            exc.evidence.execution.stop_reason
+            == TransportStopReason.RESPONSE_BODY_LIMIT_EXCEEDED
+        )
+    else:
+        raise AssertionError("Expected HTTPResponseTooLargeError.")
+
+
+def test_body_limit_failure_does_not_retry(
+    monkeypatch,
+):
+    configure(
+        monkeypatch,
+        [
+            (
+                200,
+                {"Content-Length": "2048"},
+                b"x",
+            ),
+            (
+                200,
+                {},
+                b"must-not-be-requested",
+            ),
+        ],
+    )
+
+    try:
+        fetch_with_transport(
+            "https://example.test/",
+            maximum_bytes=1024,
+        )
+    except HTTPResponseTooLargeError as exc:
+        assert exc.evidence is not None
+        assert exc.evidence.execution.requests_sent == 1
+        assert exc.evidence.execution.retries == 0
+        assert SequenceClient.seen_urls == [
+            "https://example.test/",
+        ]
+        assert len(SequenceClient.responses) == 1
+    else:
+        raise AssertionError("Expected HTTPResponseTooLargeError.")
 
 
 def test_executor_completes_single_request(monkeypatch):

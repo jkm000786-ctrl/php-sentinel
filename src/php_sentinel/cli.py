@@ -8,7 +8,9 @@ from rich.console import Console
 from rich.table import Table
 
 from php_sentinel.assessment.pipeline import run_unified_assessment
+from php_sentinel.evidence.operational_failure import build_operational_failure_evidence
 from php_sentinel.evidence.writer import write_json_evidence
+from php_sentinel.http.client import HTTPResponseTooLargeError
 from php_sentinel.intelligence.activation import (
     IntelligenceActivationError,
     activate_verified_intelligence,
@@ -16,6 +18,7 @@ from php_sentinel.intelligence.activation import (
 from php_sentinel.intelligence.lifecycle import (
     DEFAULT_LIFECYCLE_STATE_PATH,
 )
+from php_sentinel.models.transport import TransportEvidence
 from php_sentinel.models.vendor import (
     BackportStatus,
     VendorFamily,
@@ -29,6 +32,52 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _write_operational_failure_evidence(
+    *,
+    target: str,
+    exc: Exception,
+    evidence_out: Path | None,
+) -> tuple[Path | None, OSError | None]:
+    if evidence_out is None:
+        return None, None
+
+    transport = getattr(
+        exc,
+        "evidence",
+        None,
+    )
+
+    if not isinstance(
+        transport,
+        TransportEvidence,
+    ):
+        return None, None
+
+    artifact = build_operational_failure_evidence(
+        target=target,
+        transport=transport,
+    )
+
+    suffix = evidence_out.suffix or ".json"
+
+    failure_path = evidence_out.with_name(
+        f"{evidence_out.stem}"
+        f"-operational-failure"
+        f"{suffix}"
+    )
+
+    try:
+        return (
+            write_json_evidence(
+                artifact,
+                failure_path,
+            ),
+            None,
+        )
+    except OSError as write_error:
+        return None, write_error
 
 
 @app.callback()
@@ -159,7 +208,33 @@ def analyze(
             advisory_reference=advisory_reference,
             lab_validation=validation,
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, HTTPResponseTooLargeError) as exc:
+        (
+            failure_path,
+            failure_write_error,
+        ) = _write_operational_failure_evidence(
+            target=target,
+            exc=exc,
+            evidence_out=evidence_out,
+        )
+
+        if failure_write_error is not None:
+            typer.echo(
+                (
+                    "Operational failure evidence could not be written: "
+                    f"{failure_write_error}"
+                ),
+                err=True,
+            )
+        elif failure_path is not None:
+            typer.echo(
+                (
+                    "Operational failure evidence written: "
+                    f"{failure_path}"
+                ),
+                err=True,
+            )
+
         typer.echo(
             f"HTTP error: {exc}",
             err=True,
@@ -428,7 +503,33 @@ def scan(
             lab_validation=validation,
             intelligence_selection=(intelligence_selection),
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, HTTPResponseTooLargeError) as exc:
+        (
+            failure_path,
+            failure_write_error,
+        ) = _write_operational_failure_evidence(
+            target=target,
+            exc=exc,
+            evidence_out=evidence_out,
+        )
+
+        if failure_write_error is not None:
+            typer.echo(
+                (
+                    "Operational failure evidence could not be written: "
+                    f"{failure_write_error}"
+                ),
+                err=True,
+            )
+        elif failure_path is not None:
+            typer.echo(
+                (
+                    "Operational failure evidence written: "
+                    f"{failure_path}"
+                ),
+                err=True,
+            )
+
         typer.echo(
             f"HTTP error: {exc}",
             err=True,
