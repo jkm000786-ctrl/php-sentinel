@@ -5,6 +5,10 @@ import hashlib
 import httpx
 
 from php_sentinel.assessment.consistency import validate_cross_layer_consistency
+from php_sentinel.assessment.edge_authority import (
+    resolve_edge_authority,
+    validate_waf_differential_binding,
+)
 from php_sentinel.assessment.exposure import assess_response
 from php_sentinel.assessment.finding_engine import build_findings
 from php_sentinel.detection.edge_detector import classify_edge_response
@@ -26,8 +30,11 @@ from php_sentinel.models.cve_decision import (
 )
 from php_sentinel.models.edge import (
     ApplicationReachability,
-    EdgeAssessment,
     EdgeResponseClass,
+)
+from php_sentinel.models.edge_authority import (
+    EdgeAuthorityDecision,
+    WAFDifferentialEvidence,
 )
 from php_sentinel.models.intelligence_lifecycle import IntelligenceLifecycleDecision
 from php_sentinel.models.intelligence_policy import IntelligencePolicy
@@ -81,12 +88,12 @@ def build_vendor_evidence(
 
 
 def _edge_blocks_application_assessment(
-    edge_assessment: EdgeAssessment,
+    edge_authority: EdgeAuthorityDecision,
 ) -> bool:
     return (
-        edge_assessment.response_class
+        edge_authority.effective_response_class
         != EdgeResponseClass.APPLICATION_RESPONSE
-        or edge_assessment.application_reachability
+        or edge_authority.effective_application_reachability
         in {
             ApplicationReachability.UNKNOWN,
             ApplicationReachability.NOT_REACHED,
@@ -98,13 +105,13 @@ def _build_edge_inconclusive_assessment(
     *,
     target: str,
     response,
-    edge_assessment: EdgeAssessment,
+    edge_authority: EdgeAuthorityDecision,
 ) -> Assessment:
     reason = (
-        "Application-layer assessment suppressed because the observed "
-        f"response class is {edge_assessment.response_class.value} and "
+        "Application-layer assessment suppressed because the effective "
+        f"response class is {edge_authority.effective_response_class.value} and "
         "application reachability is "
-        f"{edge_assessment.application_reachability.value}."
+        f"{edge_authority.effective_application_reachability.value}."
     )
 
     return Assessment(
@@ -117,7 +124,11 @@ def _build_edge_inconclusive_assessment(
         exposure_priority=ExposurePriority.UNKNOWN.value,
         status=AssessmentStatus.INCONCLUSIVE,
         applicable_cves=[],
-        rationale=[*edge_assessment.rationale, reason],
+        rationale=[
+            *edge_authority.passive.rationale,
+            *edge_authority.rationale,
+            reason,
+        ],
         remediation=[
             (
                 "Obtain a permitted application-layer response before "
@@ -200,6 +211,7 @@ def run_unified_assessment(
     backport_status: BackportStatus = BackportStatus.UNKNOWN,
     advisory_reference: str | None = None,
     lab_validation: ValidationReport | None = None,
+    differential_evidence: WAFDifferentialEvidence | None = None,
     intelligence_selection: VerifiedIntelligenceSelection | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
     intelligence_trust: IntelligenceTrustDecision | None = None,
@@ -252,6 +264,25 @@ def run_unified_assessment(
 
     edge_assessment = classify_edge_response(response)
 
+    if differential_evidence is not None:
+        validate_waf_differential_binding(
+            target=target,
+            final_url=str(response.url),
+            observed_http_status=response.status_code,
+            evidence=differential_evidence,
+        )
+
+    edge_authority = resolve_edge_authority(
+        edge_assessment,
+        differential_evidence=differential_evidence,
+    )
+
+    reported_edge_authority = (
+        edge_authority
+        if differential_evidence is not None
+        else None
+    )
+
     transport_application_suppressed = (
         _transport_blocks_application_assessment(
             transport_evidence
@@ -259,7 +290,7 @@ def run_unified_assessment(
     )
     edge_application_suppressed = (
         _edge_blocks_application_assessment(
-            edge_assessment
+            edge_authority
         )
     )
 
@@ -290,7 +321,7 @@ def run_unified_assessment(
             assessment = _build_edge_inconclusive_assessment(
                 target=target,
                 response=response,
-                edge_assessment=edge_assessment,
+                edge_authority=edge_authority,
             )
 
             gate_reason = (
@@ -392,6 +423,7 @@ def run_unified_assessment(
         assessment=assessment,
         cve_report=cve_report,
         edge_assessment=edge_assessment,
+        edge_authority=reported_edge_authority,
     )
 
     validate_cross_layer_consistency(
@@ -399,6 +431,7 @@ def run_unified_assessment(
         cve_report=cve_report,
         findings=findings,
         edge_assessment=edge_assessment,
+        edge_authority=edge_authority,
         transport_evidence=transport_evidence,
     )
 
@@ -415,6 +448,13 @@ def run_unified_assessment(
         "findings": [finding.model_dump(mode="json") for finding in findings],
     }
 
+    if reported_edge_authority is not None:
+        canonical_payload["edge_authority"] = (
+            reported_edge_authority.model_dump(
+                mode="json"
+            )
+        )
+
     target_identity_payload = {
         "requested_url": metadata.requested_url,
         "final_url": metadata.final_url,
@@ -428,10 +468,34 @@ def run_unified_assessment(
         "body_sha256": metadata.body_sha256,
     }
 
+    if reported_edge_authority is not None:
+        target_identity_payload.update(
+            {
+                "effective_edge_response_class": (
+                    reported_edge_authority
+                    .effective_response_class.value
+                ),
+                "effective_application_reachability": (
+                    reported_edge_authority
+                    .effective_application_reachability.value
+                ),
+                "waf_interception_established": (
+                    reported_edge_authority
+                    .waf_interception_established
+                ),
+                "differential_evidence_sha256": (
+                    differential_evidence.evidence_sha256
+                    if differential_evidence is not None
+                    else None
+                ),
+            }
+        )
+
     provenance = build_provenance(
         canonical_payload=canonical_payload,
         target_identity_payload=(target_identity_payload),
         edge_assessment=edge_assessment,
+        edge_authority=reported_edge_authority,
         transport_evidence=transport_evidence,
         intelligence_selection=(provenance_selection),
         intelligence_policy=(selected_policy if provenance_selection is None else None),
@@ -442,6 +506,7 @@ def run_unified_assessment(
         http=metadata,
         transport=transport_evidence,
         edge=edge_assessment,
+        edge_authority=reported_edge_authority,
         assessment=assessment,
         cve_decisions=cve_report,
         findings=findings,

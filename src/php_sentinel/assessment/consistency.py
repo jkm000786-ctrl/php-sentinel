@@ -12,6 +12,7 @@ from php_sentinel.models.edge import (
     EdgeAssessment,
     EdgeResponseClass,
 )
+from php_sentinel.models.edge_authority import EdgeAuthorityDecision
 from php_sentinel.models.finding import Finding, FindingSeverity, FindingState
 from php_sentinel.models.transport import (
     TransportEvidence,
@@ -83,6 +84,7 @@ def validate_cross_layer_consistency(
     cve_report: CVEDecisionReport,
     findings: list[Finding],
     edge_assessment: EdgeAssessment | None = None,
+    edge_authority: EdgeAuthorityDecision | None = None,
     transport_evidence: TransportEvidence | None = None,
 ) -> None:
     """Fail closed when independently derived report layers contradict each other."""
@@ -140,10 +142,43 @@ def validate_cross_layer_consistency(
 
     edge_application_suppressed = False
 
-    if edge_assessment is not None:
+    effective_response_class = None
+    effective_application_reachability = None
+
+    if edge_authority is not None:
+        if edge_assessment is None:
+            _fail(
+                "Resolved edge authority requires the passive edge "
+                "assessment it was derived from."
+            )
+
+        if edge_authority.passive != edge_assessment:
+            _fail(
+                "Resolved edge authority passive observation differs "
+                "from the report edge assessment."
+            )
+
+        effective_response_class = (
+            edge_authority.effective_response_class
+        )
+        effective_application_reachability = (
+            edge_authority
+            .effective_application_reachability
+        )
+
+    elif edge_assessment is not None:
+        effective_response_class = (
+            edge_assessment.response_class
+        )
+        effective_application_reachability = (
+            edge_assessment.application_reachability
+        )
+
+    if effective_response_class is not None:
         edge_application_suppressed = (
-            edge_assessment.response_class != EdgeResponseClass.APPLICATION_RESPONSE
-            or edge_assessment.application_reachability
+            effective_response_class
+            != EdgeResponseClass.APPLICATION_RESPONSE
+            or effective_application_reachability
             in {
                 ApplicationReachability.UNKNOWN,
                 ApplicationReachability.NOT_REACHED,

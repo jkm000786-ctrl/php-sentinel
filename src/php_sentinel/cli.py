@@ -597,6 +597,44 @@ def scan(
         "Application reachability",
         report.edge.application_reachability.value,
     )
+
+    if report.edge_authority is not None:
+        authority = report.edge_authority
+        differential = authority.differential_evidence
+
+        summary.add_row(
+            "Effective edge response class",
+            authority.effective_response_class.value,
+        )
+        summary.add_row(
+            "Effective application reachability",
+            authority.effective_application_reachability.value,
+        )
+        summary.add_row(
+            "WAF interception established",
+            str(authority.waf_interception_established),
+        )
+        summary.add_row(
+            "Differential authority constrained",
+            str(authority.constrained_by_differential),
+        )
+        summary.add_row(
+            "Differential provider",
+            (
+                differential.provider.value
+                if differential is not None
+                else "none"
+            ),
+        )
+        summary.add_row(
+            "Differential evidence SHA-256",
+            (
+                differential.evidence_sha256
+                if differential is not None
+                else "none"
+            ),
+        )
+
     summary.add_row(
         "PHP detected",
         str(assessment.php_detected),

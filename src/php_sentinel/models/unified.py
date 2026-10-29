@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from php_sentinel.models.assessment import Assessment
 from php_sentinel.models.cve_decision import CVEDecisionReport
 from php_sentinel.models.edge import EdgeAssessment
+from php_sentinel.models.edge_authority import EdgeAuthorityDecision
 from php_sentinel.models.finding import Finding
 from php_sentinel.models.provenance import EvidenceProvenance
 from php_sentinel.models.transport import TransportEvidence
@@ -31,6 +32,7 @@ class UnifiedAssessmentReport(BaseModel):
     http: HTTPMetadata
     transport: TransportEvidence | None = None
     edge: EdgeAssessment = Field(default_factory=EdgeAssessment)
+    edge_authority: EdgeAuthorityDecision | None = None
     assessment: Assessment
     cve_decisions: CVEDecisionReport
     findings: list[Finding] = Field(default_factory=list)

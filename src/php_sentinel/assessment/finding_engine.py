@@ -7,6 +7,7 @@ from php_sentinel.models.cve_decision import (
     CVEDecisionStatus,
 )
 from php_sentinel.models.edge import EdgeAssessment
+from php_sentinel.models.edge_authority import EdgeAuthorityDecision
 from php_sentinel.models.finding import (
     Finding,
     FindingSeverity,
@@ -65,6 +66,7 @@ def build_findings(
     assessment: Assessment,
     cve_report: CVEDecisionReport,
     edge_assessment: EdgeAssessment | None = None,
+    edge_authority: EdgeAuthorityDecision | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
 
@@ -95,6 +97,28 @@ def build_findings(
                     (
                         "Application reachability: "
                         f"{edge_assessment.application_reachability.value}"
+                    ),
+                ]
+            )
+
+        if edge_authority is not None:
+            evidence.extend(
+                [
+                    (
+                        "Effective edge response class: "
+                        f"{edge_authority.effective_response_class.value}"
+                    ),
+                    (
+                        "Effective application reachability: "
+                        f"{edge_authority.effective_application_reachability.value}"
+                    ),
+                    (
+                        "WAF interception established: "
+                        f"{edge_authority.waf_interception_established}"
+                    ),
+                    (
+                        "Differential authority constrained: "
+                        f"{edge_authority.constrained_by_differential}"
                     ),
                 ]
             )

@@ -51,6 +51,49 @@ def render_markdown_report(
         f"- **Challenge detected:** {report.edge.challenge_detected}",
         f"- **Rate limited:** {report.edge.rate_limited}",
         "",
+        *(
+            [
+                "## Resolved Edge Authority",
+                "",
+                (
+                    "- **Effective response class:** "
+                    f"`{report.edge_authority.effective_response_class.value}`"
+                ),
+                (
+                    "- **Effective application reachability:** "
+                    f"`{report.edge_authority.effective_application_reachability.value}`"
+                ),
+                (
+                    "- **WAF interception established:** "
+                    f"{report.edge_authority.waf_interception_established}"
+                ),
+                (
+                    "- **Differential constrained:** "
+                    f"{report.edge_authority.constrained_by_differential}"
+                ),
+                (
+                    "- **Differential authority:** "
+                    f"`{report.edge_authority.differential_evidence.authority.value}`"
+                    if report.edge_authority.differential_evidence
+                    else "- **Differential authority:** `none`"
+                ),
+                (
+                    "- **Differential provider:** "
+                    f"`{report.edge_authority.differential_evidence.provider.value}`"
+                    if report.edge_authority.differential_evidence
+                    else "- **Differential provider:** `none`"
+                ),
+                (
+                    "- **Differential evidence SHA-256:** "
+                    f"`{report.edge_authority.differential_evidence.evidence_sha256}`"
+                    if report.edge_authority.differential_evidence
+                    else "- **Differential evidence SHA-256:** `none`"
+                ),
+                "",
+            ]
+            if report.edge_authority is not None
+            else []
+        ),
         "## Transport Execution",
         "",
         (

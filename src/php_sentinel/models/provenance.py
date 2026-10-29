@@ -19,6 +19,16 @@ class EvidenceProvenance(BaseModel):
     edge_provider_ambiguous: bool | None = None
     edge_response_class: str | None = None
     application_reachability: str | None = None
+
+    effective_edge_response_class: str | None = None
+    effective_application_reachability: str | None = None
+    waf_interception_established: bool | None = None
+    edge_authority_constrained_by_differential: bool | None = None
+    differential_evidence_authority: str | None = None
+    differential_edge_provider: str | None = None
+    differential_protected_http_status: int | None = None
+    differential_evidence_sha256: str | None = None
+
     edge_challenge_detected: bool | None = None
     edge_rate_limited: bool | None = None
 

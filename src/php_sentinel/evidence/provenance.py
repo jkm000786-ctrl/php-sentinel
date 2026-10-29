@@ -22,6 +22,7 @@ from php_sentinel.intelligence.trust import (
     resolve_policy_trust,
 )
 from php_sentinel.models.edge import EdgeAssessment
+from php_sentinel.models.edge_authority import EdgeAuthorityDecision
 from php_sentinel.models.intelligence_lifecycle import (
     IntelligenceLifecycleDecision,
 )
@@ -95,12 +96,26 @@ def build_provenance(
     canonical_payload: dict,
     target_identity_payload: dict,
     edge_assessment: EdgeAssessment | None = None,
+    edge_authority: EdgeAuthorityDecision | None = None,
     transport_evidence: TransportEvidence | None = None,
     intelligence_selection: VerifiedIntelligenceSelection | None = None,
     intelligence_policy: IntelligencePolicy | None = None,
     intelligence_trust: IntelligenceTrustDecision | None = None,
     intelligence_lifecycle: IntelligenceLifecycleDecision | None = None,
 ) -> EvidenceProvenance:
+    if edge_authority is not None:
+        if edge_assessment is None:
+            raise ValueError(
+                "Resolved edge authority requires the passive "
+                "edge assessment it was derived from."
+            )
+
+        if edge_authority.passive != edge_assessment:
+            raise ValueError(
+                "Resolved edge authority passive observation "
+                "does not match the supplied edge assessment."
+            )
+
     if intelligence_selection is not None:
         if any(
             item is not None
@@ -158,6 +173,60 @@ def build_provenance(
         application_reachability=(
             edge_assessment.application_reachability.value
             if edge_assessment
+            else None
+        ),
+        effective_edge_response_class=(
+            edge_authority.effective_response_class.value
+            if edge_authority
+            else None
+        ),
+        effective_application_reachability=(
+            edge_authority.effective_application_reachability.value
+            if edge_authority
+            else None
+        ),
+        waf_interception_established=(
+            edge_authority.waf_interception_established
+            if edge_authority
+            else None
+        ),
+        edge_authority_constrained_by_differential=(
+            edge_authority.constrained_by_differential
+            if edge_authority
+            else None
+        ),
+        differential_evidence_authority=(
+            edge_authority.differential_evidence.authority.value
+            if (
+                edge_authority
+                and edge_authority.differential_evidence
+            )
+            else None
+        ),
+        differential_edge_provider=(
+            edge_authority.differential_evidence.provider.value
+            if (
+                edge_authority
+                and edge_authority.differential_evidence
+            )
+            else None
+        ),
+        differential_protected_http_status=(
+            edge_authority
+            .differential_evidence
+            .protected_http_status
+            if (
+                edge_authority
+                and edge_authority.differential_evidence
+            )
+            else None
+        ),
+        differential_evidence_sha256=(
+            edge_authority.differential_evidence.evidence_sha256
+            if (
+                edge_authority
+                and edge_authority.differential_evidence
+            )
             else None
         ),
         edge_challenge_detected=(
