@@ -483,11 +483,6 @@ def run_unified_assessment(
                     reported_edge_authority
                     .waf_interception_established
                 ),
-                "differential_evidence_sha256": (
-                    differential_evidence.evidence_sha256
-                    if differential_evidence is not None
-                    else None
-                ),
             }
         )
 

@@ -210,3 +210,72 @@ def test_differential_changes_canonical_and_target_identity(
         passive.provenance.target_identity_sha256
         != constrained.provenance.target_identity_sha256
     )
+
+@patch("php_sentinel.assessment.pipeline.fetch_with_transport")
+def test_differential_artifact_digest_changes_canonical_not_target_identity(
+    mock_fetch,
+):
+    mock_fetch.side_effect = [
+        _blocked_response(),
+        _blocked_response(),
+    ]
+
+    first = run_unified_assessment(
+        LOOPBACK_TARGET,
+        differential_evidence=_evidence(
+            digest="d" * 64,
+        ),
+    )
+
+    second = run_unified_assessment(
+        LOOPBACK_TARGET,
+        differential_evidence=_evidence(
+            digest="e" * 64,
+        ),
+    )
+
+    first_authority = first.edge_authority
+    second_authority = second.edge_authority
+
+    assert first_authority is not None
+    assert second_authority is not None
+
+    assert (
+        first_authority.effective_response_class
+        == second_authority.effective_response_class
+    )
+
+    assert (
+        first_authority.effective_application_reachability
+        == second_authority.effective_application_reachability
+    )
+
+    assert (
+        first_authority.waf_interception_established
+        == second_authority.waf_interception_established
+    )
+
+    assert (
+        first_authority.constrained_by_differential
+        == second_authority.constrained_by_differential
+    )
+
+    assert (
+        first.provenance.canonical_sha256
+        != second.provenance.canonical_sha256
+    )
+
+    assert (
+        first.provenance.target_identity_sha256
+        == second.provenance.target_identity_sha256
+    )
+
+    assert (
+        first.provenance.differential_evidence_sha256
+        == "d" * 64
+    )
+
+    assert (
+        second.provenance.differential_evidence_sha256
+        == "e" * 64
+    )
